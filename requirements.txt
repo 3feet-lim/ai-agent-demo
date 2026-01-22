@@ -1,0 +1,27 @@
+# Web Framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+
+# AWS Bedrock
+boto3>=1.34.0
+botocore>=1.34.0
+
+# LangChain + LangGraph
+langchain>=0.3.0
+langchain-aws>=0.2.0
+langchain-core>=0.3.0
+langgraph>=0.2.0
+
+# MCP (Model Context Protocol)
+mcp>=1.0.0
+
+# Environment and Configuration
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# Data Storage
+aiosqlite>=0.19.0
+
+# Utilities
+httpx>=0.26.0

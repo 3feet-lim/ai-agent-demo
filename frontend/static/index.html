@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Agent Demo</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- 사이드바 -->
+        <aside class="sidebar">
+            <button id="new-chat-btn" class="new-chat-btn">
+                + 새 대화
+            </button>
+            <div class="conversation-list" id="conversation-list">
+                <!-- 대화 목록이 여기에 동적으로 추가됨 -->
+            </div>
+        </aside>
+
+        <!-- 메인 채팅 영역 -->
+        <main class="chat-container">
+            <!-- 헤더 -->
+            <header class="chat-header">
+                <h1>AI Agent Demo</h1>
+                <span class="model-badge">Claude Sonnet</span>
+            </header>
+
+            <!-- 메시지 영역 -->
+            <div class="messages-container" id="messages-container">
+                <div class="welcome-message" id="welcome-message">
+                    <h2>무엇을 도와드릴까요?</h2>
+                    <p>질문을 입력하시면 AI가 답변해 드립니다.</p>
+                </div>
+            </div>
+
+            <!-- 입력 영역 -->
+            <div class="input-container">
+                <div class="input-wrapper">
+                    <textarea
+                        id="message-input"
+                        placeholder="메시지를 입력하세요..."
+                        rows="1"
+                        autofocus
+                    ></textarea>
+                    <button id="send-btn" class="send-btn" disabled>
+                        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+                        </svg>
+                    </button>
+                </div>
+                <p class="input-hint">Enter로 전송, Shift+Enter로 줄바꿈</p>
+            </div>
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
