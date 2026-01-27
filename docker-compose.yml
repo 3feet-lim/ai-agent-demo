@@ -3,10 +3,13 @@ services:
   grafana-mcp:
     image: grafana/mcp-grafana:latest
     container_name: grafana-mcp
+    hostname: grafana-mcp
     env_file:
       - .env
     networks:
-      - app-network
+      app-network:
+        aliases:
+          - grafana-mcp
     restart: unless-stopped
     # SSE 모드로 실행 (stdio가 아닌 HTTP 서버로 실행)
     # Grafana MCP는 기본적으로 SSE 모드 지원
@@ -21,6 +24,7 @@ services:
   cloudwatch-mcp:
     image: awslabs/cloudwatch-mcp-server:latest
     container_name: cloudwatch-mcp
+    hostname: cloudwatch-mcp
     env_file:
       - .env
     environment:
@@ -30,7 +34,9 @@ services:
       - AWS_API_MCP_PORT=8000
       - AUTH_TYPE=no-auth
     networks:
-      - app-network
+      app-network:
+        aliases:
+          - cloudwatch-mcp
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "kill -0 1 2>/dev/null || exit 1"]
@@ -43,6 +49,7 @@ services:
   aws-api-mcp:
     image: awslabs/aws-api-mcp-server:latest
     container_name: aws-api-mcp
+    hostname: aws-api-mcp
     env_file:
       - .env
     environment:
@@ -52,7 +59,9 @@ services:
       - AWS_API_MCP_PORT=8000
       - AUTH_TYPE=no-auth
     networks:
-      - app-network
+      app-network:
+        aliases:
+          - aws-api-mcp
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "kill -0 1 2>/dev/null || exit 1"]
@@ -80,6 +89,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: ai-agent-backend
+    hostname: backend
     expose:
       - "8000"
     env_file:
@@ -90,7 +100,9 @@ services:
       # SQLite DB 영속화
       - backend-data:/app/data
     networks:
-      - app-network
+      app-network:
+        aliases:
+          - backend
     restart: unless-stopped
     depends_on:
       grafana-mcp:

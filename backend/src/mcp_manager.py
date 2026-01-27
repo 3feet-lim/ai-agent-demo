@@ -252,11 +252,17 @@ class MCPManager:
         if self._initialized:
             return True
 
-        self._setup_servers()
+        try:
+            self._setup_servers()
+        except Exception as e:
+            logger.error(f"Error setting up MCP servers: {e}")
+            self._initialized = True
+            return True  # 설정 실패해도 계속 진행
 
         if not self._servers:
             logger.info("No MCP servers configured")
-            return False
+            self._initialized = True
+            return True
 
         connected_count = 0
         for name, server in self._servers.items():
@@ -265,14 +271,17 @@ class MCPManager:
                 if await server.connect():
                     connected_count += 1
                     # 도구 목록 캐시
-                    tools = await server.list_tools()
-                    for tool in tools:
-                        self._tools_cache[tool.name] = tool
-                        logger.info(f"Registered tool: {tool.name} from {name}")
+                    try:
+                        tools = await server.list_tools()
+                        for tool in tools:
+                            self._tools_cache[tool.name] = tool
+                            logger.info(f"Registered tool: {tool.name} from {name}")
+                    except Exception as e:
+                        logger.warning(f"Failed to list tools from {name}: {e}")
                 else:
                     logger.warning(f"Failed to connect to {name}, but continuing with other servers")
             except Exception as e:
-                logger.error(f"Error connecting to {name}: {e}, but continuing with other servers")
+                logger.warning(f"Error connecting to {name}: {e}, but continuing with other servers")
 
         self._initialized = True
         

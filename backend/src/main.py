@@ -30,14 +30,24 @@ async def lifespan(app: FastAPI):
     # 시작 시 초기화
     logger.info("Starting AI Agent Demo...")
     await get_conversation_store()
-    await get_mcp_manager()
+    
+    # MCP 연결 시도 (실패해도 계속 진행)
+    try:
+        await get_mcp_manager()
+        logger.info("MCP manager initialized")
+    except Exception as e:
+        logger.warning(f"MCP manager initialization failed, but continuing: {e}")
+    
     logger.info(f"Using Bedrock model: {settings.bedrock_model_id}")
     logger.info(f"AWS Region: {settings.aws_region}")
     yield
     # 종료 시 정리
     logger.info("Shutting down AI Agent Demo...")
-    mcp = await get_mcp_manager()
-    await mcp.disconnect()
+    try:
+        mcp = await get_mcp_manager()
+        await mcp.disconnect()
+    except Exception as e:
+        logger.warning(f"Error during MCP cleanup: {e}")
 
 
 app = FastAPI(
