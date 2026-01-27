@@ -1,11 +1,10 @@
 services:
   # Grafana MCP 서버
   grafana-mcp:
-    image: grafana/mcp-grafana
+    image: grafana/mcp-grafana:latest
     container_name: grafana-mcp
-    environment:
-      - GRAFANA_URL=${GRAFANA_URL}
-      - GRAFANA_SERVICE_ACCOUNT_TOKEN=${GRAFANA_API_KEY}
+    env_file:
+      - .env
     networks:
       - app-network
     restart: unless-stopped
@@ -20,10 +19,8 @@ services:
   cloudwatch-mcp:
     image: awslabs/cloudwatch-mcp-server:latest
     container_name: cloudwatch-mcp
-    environment:
-      - AWS_REGION=${AWS_REGION}
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+    env_file:
+      - .env
     networks:
       - app-network
     restart: unless-stopped
@@ -38,10 +35,8 @@ services:
   aws-api-mcp:
     image: awslabs/aws-api-mcp-server:latest
     container_name: aws-api-mcp
-    environment:
-      - AWS_REGION=${AWS_REGION}
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+    env_file:
+      - .env
     networks:
       - app-network
     restart: unless-stopped
