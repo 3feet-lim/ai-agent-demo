@@ -51,37 +51,81 @@ class MCPServerConnection:
     async def connect(self) -> bool:
         """MCP 서버에 SSE/HTTP로 연결"""
         try:
-            logger.info(f"Attempting to connect to MCP server: {self.name}")
-            logger.info(f"URL: {self.url}")
+            logger.info(f"[{self.name}] Step 1/4: Starting connection to {self.url}")
 
             # HTTP 클라이언트 생성
+            logger.info(f"[{self.name}] Step 2/4: Creating HTTP client")
             self._http_client = httpx.AsyncClient(timeout=30.0)
 
             # Streamable HTTP 클라이언트 컨텍스트 시작
+            logger.info(f"[{self.name}] Step 3/4: Establishing streamable HTTP connection")
             self._streamable_context = streamable_http_client(
                 self.url,
                 http_client=self._http_client
             )
-            read, write, _ = await self._streamable_context.__aenter__()
+            
+            try:
+                read, write, _ = await self._streamable_context.__aenter__()
+                logger.info(f"[{self.name}] ✓ Streamable HTTP connection established")
+            except httpx.ConnectError as e:
+                logger.warning(f"[{self.name}] ✗ Failed at Step 3: Cannot reach server at {self.url}")
+                logger.warning(f"[{self.name}]   Reason: {e}")
+                if self._http_client:
+                    await self._http_client.aclose()
+                    self._http_client = None
+                self._streamable_context = None
+                self._connected = False
+                return False
+            except Exception as e:
+                logger.error(f"[{self.name}] ✗ Failed at Step 3: Unexpected error during connection")
+                logger.error(f"[{self.name}]   Error: {type(e).__name__}: {e}")
+                if self._http_client:
+                    await self._http_client.aclose()
+                    self._http_client = None
+                self._streamable_context = None
+                self._connected = False
+                return False
 
             # 세션 컨텍스트 시작
+            logger.info(f"[{self.name}] Step 4/4: Initializing MCP session")
             self._session_context = ClientSession(read, write)
-            self._session = await self._session_context.__aenter__()
+            
+            try:
+                self._session = await self._session_context.__aenter__()
+                logger.info(f"[{self.name}] ✓ MCP session created")
+            except Exception as e:
+                logger.error(f"[{self.name}] ✗ Failed at Step 4: Cannot create MCP session")
+                logger.error(f"[{self.name}]   Error: {type(e).__name__}: {e}")
+                if self._streamable_context:
+                    try:
+                        await self._streamable_context.__aexit__(None, None, None)
+                    except Exception:
+                        pass
+                if self._http_client:
+                    await self._http_client.aclose()
+                self._streamable_context = None
+                self._http_client = None
+                self._session_context = None
+                self._connected = False
+                return False
 
             # 세션 초기화
-            await self._session.initialize()
+            try:
+                await self._session.initialize()
+                logger.info(f"[{self.name}] ✓ MCP session initialized")
+            except Exception as e:
+                logger.error(f"[{self.name}] ✗ Failed during session initialization")
+                logger.error(f"[{self.name}]   Error: {type(e).__name__}: {e}")
+                await self._cleanup_contexts()
+                return False
 
             self._connected = True
-            logger.info(f"Successfully connected to MCP server: {self.name}")
+            logger.info(f"[{self.name}] ✅ Successfully connected to MCP server")
             return True
 
-        except httpx.ConnectError as e:
-            logger.error(f"Connection error for {self.name}: {e}")
-            self._connected = False
-            await self._cleanup_contexts()
-            return False
         except Exception as e:
-            logger.error(f"Failed to connect to MCP server {self.name}: {e}")
+            logger.error(f"[{self.name}] ✗ Unexpected error during connection process")
+            logger.error(f"[{self.name}]   Error: {type(e).__name__}: {e}")
             self._connected = False
             await self._cleanup_contexts()
             return False
@@ -217,6 +261,7 @@ class MCPManager:
         connected_count = 0
         for name, server in self._servers.items():
             try:
+                logger.info(f"Attempting to connect to MCP server: {name}")
                 if await server.connect():
                     connected_count += 1
                     # 도구 목록 캐시
@@ -224,11 +269,19 @@ class MCPManager:
                     for tool in tools:
                         self._tools_cache[tool.name] = tool
                         logger.info(f"Registered tool: {tool.name} from {name}")
+                else:
+                    logger.warning(f"Failed to connect to {name}, but continuing with other servers")
             except Exception as e:
-                logger.error(f"Failed to connect to {name}: {e}")
+                logger.error(f"Error connecting to {name}: {e}, but continuing with other servers")
 
         self._initialized = True
-        return connected_count > 0
+        
+        if connected_count == 0:
+            logger.warning("No MCP servers connected, but backend will continue running")
+        else:
+            logger.info(f"Successfully connected to {connected_count} MCP server(s)")
+        
+        return True  # 항상 True 반환 (MCP 서버 없이도 backend 실행 가능)
 
     async def disconnect(self):
         """모든 MCP 서버 연결 해제"""
