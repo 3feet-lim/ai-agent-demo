@@ -2,15 +2,13 @@
 MCP (Model Context Protocol) 관리자
 Grafana MCP와 CloudWatch MCP 서버를 관리하고 도구를 제공합니다.
 """
-import asyncio
 import logging
-import os
 from typing import Optional, Any
 from dataclasses import dataclass, field
-from contextlib import asynccontextmanager
 
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
+import httpx
+from mcp import ClientSession
+from mcp.client.streamable_http import streamable_http_client
 
 from .config import get_settings
 
@@ -35,15 +33,14 @@ class MCPContext:
 
 
 class MCPServerConnection:
-    """개별 MCP 서버 연결 관리"""
+    """개별 MCP 서버 연결 관리 (SSE/HTTP 기반)"""
 
-    def __init__(self, name: str, command: str, args: list[str], env: dict[str, str] | None = None):
+    def __init__(self, name: str, url: str):
         self.name = name
-        self.command = command
-        self.args = args
-        self.env = env or {}
+        self.url = url
         self._session: Optional[ClientSession] = None
-        self._stdio_context = None
+        self._http_client: Optional[httpx.AsyncClient] = None
+        self._streamable_context = None
         self._session_context = None
         self._connected = False
 
@@ -52,24 +49,20 @@ class MCPServerConnection:
         return self._connected
 
     async def connect(self) -> bool:
-        """MCP 서버에 연결"""
+        """MCP 서버에 SSE/HTTP로 연결"""
         try:
-            # 환경변수 설정
-            server_env = os.environ.copy()
-            server_env.update(self.env)
-
-            server_params = StdioServerParameters(
-                command=self.command,
-                args=self.args,
-                env=server_env
-            )
-
             logger.info(f"Attempting to connect to MCP server: {self.name}")
-            logger.info(f"Command: {self.command} {' '.join(self.args)}")
+            logger.info(f"URL: {self.url}")
 
-            # stdio 클라이언트 컨텍스트 시작
-            self._stdio_context = stdio_client(server_params)
-            read, write = await self._stdio_context.__aenter__()
+            # HTTP 클라이언트 생성
+            self._http_client = httpx.AsyncClient(timeout=30.0)
+
+            # Streamable HTTP 클라이언트 컨텍스트 시작
+            self._streamable_context = streamable_http_client(
+                self.url,
+                http_client=self._http_client
+            )
+            read, write, _ = await self._streamable_context.__aenter__()
 
             # 세션 컨텍스트 시작
             self._session_context = ClientSession(read, write)
@@ -82,14 +75,14 @@ class MCPServerConnection:
             logger.info(f"Successfully connected to MCP server: {self.name}")
             return True
 
-        except FileNotFoundError as e:
-            logger.error(f"MCP server command not found for {self.name}: {e}")
+        except httpx.ConnectError as e:
+            logger.error(f"Connection error for {self.name}: {e}")
             self._connected = False
+            await self._cleanup_contexts()
             return False
         except Exception as e:
             logger.error(f"Failed to connect to MCP server {self.name}: {e}")
             self._connected = False
-            # 부분적으로 열린 컨텍스트 정리
             await self._cleanup_contexts()
             return False
 
@@ -103,12 +96,19 @@ class MCPServerConnection:
             self._session_context = None
             self._session = None
 
-        if self._stdio_context:
+        if self._streamable_context:
             try:
-                await self._stdio_context.__aexit__(None, None, None)
+                await self._streamable_context.__aexit__(None, None, None)
             except Exception as e:
-                logger.debug(f"Error closing stdio context for {self.name}: {e}")
-            self._stdio_context = None
+                logger.debug(f"Error closing streamable context for {self.name}: {e}")
+            self._streamable_context = None
+
+        if self._http_client:
+            try:
+                await self._http_client.aclose()
+            except Exception as e:
+                logger.debug(f"Error closing HTTP client for {self.name}: {e}")
+            self._http_client = None
 
     async def disconnect(self):
         """MCP 서버 연결 해제"""
@@ -168,52 +168,40 @@ class MCPManager:
         return bool(settings.grafana_url) or bool(settings.aws_region)
 
     def _setup_servers(self):
-        """설정에 따라 MCP 서버 구성"""
+        """설정에 따라 MCP 서버 구성 (SSE/HTTP 기반)"""
         settings = get_settings()
 
         # 디버깅: 설정 값 로그
         logger.info(f"Grafana URL from settings: {settings.grafana_url}")
         logger.info(f"Grafana API Key exists: {bool(settings.grafana_api_key)}")
 
-        # Grafana MCP 서버 설정
+        # Grafana MCP 서버 설정 (Docker 컨테이너로 실행 중)
+        # Grafana MCP는 /sse 엔드포인트 사용
         if settings.grafana_url and settings.grafana_api_key:
+            grafana_mcp_url = settings.grafana_mcp_url or "http://grafana-mcp:8000/sse"
             self._servers["grafana"] = MCPServerConnection(
                 name="grafana",
-                command="uvx",
-                args=["mcp-grafana"],
-                env={
-                    "GRAFANA_URL": settings.grafana_url,
-                    "GRAFANA_API_KEY": settings.grafana_api_key,
-                }
+                url=grafana_mcp_url
             )
-            logger.info("Grafana MCP server configured")
+            logger.info(f"Grafana MCP server configured at {grafana_mcp_url}")
 
-        # CloudWatch MCP 서버 설정
+        # CloudWatch MCP 서버 설정 (Docker 컨테이너로 실행 중)
+        # AWS MCP 서버들은 /mcp 엔드포인트 사용 (Streamable HTTP)
         if settings.aws_region:
-            env = {"AWS_REGION": settings.aws_region}
-            if settings.aws_access_key_id:
-                env["AWS_ACCESS_KEY_ID"] = settings.aws_access_key_id
-            if settings.aws_secret_access_key:
-                env["AWS_SECRET_ACCESS_KEY"] = settings.aws_secret_access_key
-            if settings.aws_profile:
-                env["AWS_PROFILE"] = settings.aws_profile
-
+            cloudwatch_mcp_url = settings.cloudwatch_mcp_url or "http://cloudwatch-mcp:8000/mcp"
             self._servers["cloudwatch"] = MCPServerConnection(
                 name="cloudwatch",
-                command="uvx",
-                args=["--from", "awslabs-cloudwatch-mcp-server", "awslabs.cloudwatch-mcp-server"],
-                env=env
+                url=cloudwatch_mcp_url
             )
-            logger.info("CloudWatch MCP server configured")
+            logger.info(f"CloudWatch MCP server configured at {cloudwatch_mcp_url}")
 
-            # AWS API MCP 서버 설정 (EC2 인스턴스 조회 등 AWS CLI 명령 실행)
+            # AWS API MCP 서버 설정 (Docker 컨테이너로 실행 중)
+            aws_api_mcp_url = settings.aws_api_mcp_url or "http://aws-api-mcp:8000/mcp"
             self._servers["aws-api"] = MCPServerConnection(
                 name="aws-api",
-                command="uvx",
-                args=["awslabs.aws-api-mcp-server"],
-                env=env
+                url=aws_api_mcp_url
             )
-            logger.info("AWS API MCP server configured")
+            logger.info(f"AWS API MCP server configured at {aws_api_mcp_url}")
 
     async def connect(self) -> bool:
         """모든 MCP 서버에 연결"""

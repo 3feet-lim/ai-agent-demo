@@ -26,9 +26,12 @@ class Settings(BaseSettings):
     # Grafana MCP 설정
     grafana_url: str | None = None
     grafana_api_key: str | None = None
+    grafana_mcp_url: str | None = None  # Grafana MCP 서버 URL (docker-compose 서비스명)
 
     # CloudWatch MCP 설정 (AWS 자격 증명은 위에서 관리)
     aws_profile: str | None = None
+    cloudwatch_mcp_url: str | None = None  # CloudWatch MCP 서버 URL
+    aws_api_mcp_url: str | None = None  # AWS API MCP 서버 URL
 
     model_config = SettingsConfigDict(
         env_file=".env",

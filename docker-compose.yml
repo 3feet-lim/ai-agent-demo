@@ -1,4 +1,57 @@
 services:
+  # Grafana MCP 서버
+  grafana-mcp:
+    image: grafana/mcp-grafana
+    container_name: grafana-mcp
+    environment:
+      - GRAFANA_URL=${GRAFANA_URL}
+      - GRAFANA_SERVICE_ACCOUNT_TOKEN=${GRAFANA_API_KEY}
+    networks:
+      - app-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/sse"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # CloudWatch MCP 서버
+  cloudwatch-mcp:
+    image: awslabs/cloudwatch-mcp-server:latest
+    container_name: cloudwatch-mcp
+    environment:
+      - AWS_REGION=${AWS_REGION}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+    networks:
+      - app-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/mcp"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # AWS API MCP 서버
+  aws-api-mcp:
+    image: awslabs/aws-api-mcp-server:latest
+    container_name: aws-api-mcp
+    environment:
+      - AWS_REGION=${AWS_REGION}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+    networks:
+      - app-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/mcp"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
   frontend:
     build:
       context: ./frontend
@@ -30,6 +83,13 @@ services:
     networks:
       - app-network
     restart: unless-stopped
+    depends_on:
+      grafana-mcp:
+        condition: service_healthy
+      cloudwatch-mcp:
+        condition: service_healthy
+      aws-api-mcp:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
