@@ -8,6 +8,8 @@ services:
     networks:
       - app-network
     restart: unless-stopped
+    # SSE 모드로 실행 (stdio가 아닌 HTTP 서버로 실행)
+    # Grafana MCP는 기본적으로 SSE 모드 지원
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/sse"]
       interval: 30s
@@ -21,6 +23,12 @@ services:
     container_name: cloudwatch-mcp
     env_file:
       - .env
+    environment:
+      # Streamable HTTP 모드로 실행
+      - AWS_API_MCP_TRANSPORT=streamable-http
+      - AWS_API_MCP_HOST=0.0.0.0
+      - AWS_API_MCP_PORT=8000
+      - AUTH_TYPE=no-auth
     networks:
       - app-network
     restart: unless-stopped
@@ -37,6 +45,12 @@ services:
     container_name: aws-api-mcp
     env_file:
       - .env
+    environment:
+      # Streamable HTTP 모드로 실행
+      - AWS_API_MCP_TRANSPORT=streamable-http
+      - AWS_API_MCP_HOST=0.0.0.0
+      - AWS_API_MCP_PORT=8000
+      - AUTH_TYPE=no-auth
     networks:
       - app-network
     restart: unless-stopped
