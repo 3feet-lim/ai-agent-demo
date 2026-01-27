@@ -231,15 +231,17 @@ class MCPManager:
 
         # CloudWatch MCP 서버 설정 (Docker 컨테이너로 실행 중)
         # AWS MCP 서버들은 /mcp 엔드포인트 사용 (Streamable HTTP)
-        if settings.aws_region:
-            cloudwatch_mcp_url = settings.cloudwatch_mcp_url or "http://cloudwatch-mcp:8000/mcp"
-            self._servers["cloudwatch"] = MCPServerConnection(
-                name="cloudwatch",
-                url=cloudwatch_mcp_url
-            )
-            logger.info(f"CloudWatch MCP server configured at {cloudwatch_mcp_url}")
+        # 주의: CloudWatch MCP는 현재 Streamable HTTP 모드 지원 불안정
+        # if settings.aws_region:
+        #     cloudwatch_mcp_url = settings.cloudwatch_mcp_url or "http://cloudwatch-mcp:8000/mcp"
+        #     self._servers["cloudwatch"] = MCPServerConnection(
+        #         name="cloudwatch",
+        #         url=cloudwatch_mcp_url
+        #     )
+        #     logger.info(f"CloudWatch MCP server configured at {cloudwatch_mcp_url}")
 
-            # AWS API MCP 서버 설정 (Docker 컨테이너로 실행 중)
+        # AWS API MCP 서버 설정 (Docker 컨테이너로 실행 중)
+        if settings.aws_region:
             aws_api_mcp_url = settings.aws_api_mcp_url or "http://aws-api-mcp:8000/mcp"
             self._servers["aws-api"] = MCPServerConnection(
                 name="aws-api",
