@@ -11,7 +11,7 @@ services:
     # SSE 모드로 실행 (stdio가 아닌 HTTP 서버로 실행)
     # Grafana MCP는 기본적으로 SSE 모드 지원
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/sse"]
+      test: ["CMD-SHELL", "pgrep -f mcp-grafana || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -33,7 +33,7 @@ services:
       - app-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/mcp"]
+      test: ["CMD-SHELL", "pgrep -f cloudwatch-mcp-server || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -55,7 +55,7 @@ services:
       - app-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/mcp"]
+      test: ["CMD-SHELL", "pgrep -f aws-api-mcp-server || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
