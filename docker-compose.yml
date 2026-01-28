@@ -58,7 +58,7 @@ services:
     environment:
       # Streamable HTTP 모드로 실행
       - AWS_API_MCP_TRANSPORT=streamable-http
-      - AWS_API_MCP_HOST=0.0.0.0
+      - AWS_API_MCP_HOST=aws-api-mcp  # Host 헤더 검증을 위해 컨테이너 이름으로 설정
       - AWS_API_MCP_PORT=8000
       - AUTH_TYPE=no-auth
     networks:
