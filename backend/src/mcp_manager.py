@@ -217,11 +217,11 @@ class MCPManager:
 
         # 디버깅: 설정 값 로그
         logger.info(f"Grafana URL from settings: {settings.grafana_url}")
-        logger.info(f"Grafana API Key exists: {bool(settings.grafana_api_key)}")
+        logger.info(f"Grafana Service Account Token exists: {bool(settings.grafana_service_account_token)}")
 
         # Grafana MCP 서버 설정 (Docker 컨테이너로 실행 중)
         # Grafana MCP는 /sse 엔드포인트 사용
-        if settings.grafana_url and settings.grafana_api_key:
+        if settings.grafana_url and settings.grafana_service_account_token:
             grafana_mcp_url = settings.grafana_mcp_url or "http://grafana-mcp:8000/sse"
             self._servers["grafana"] = MCPServerConnection(
                 name="grafana",
