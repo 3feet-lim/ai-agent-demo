@@ -7,7 +7,7 @@ from typing import Optional, Any
 from dataclasses import dataclass, field
 
 import httpx
-from mcp import ClientSession
+from mcp import ClientSession, types
 from mcp.client.streamable_http import streamable_http_client
 
 from .config import get_settings
@@ -88,6 +88,21 @@ class MCPServerConnection:
 
             # 세션 컨텍스트 시작
             logger.info(f"[{self.name}] Step 4/4: Initializing MCP session")
+            
+            # MCP 클라이언트 정보 설정
+            client_params = types.InitializeRequestParams(
+                protocolVersion="2024-11-05",  # MCP 프로토콜 버전
+                capabilities=types.ClientCapabilities(
+                    # 필요한 클라이언트 기능 설정
+                    roots=None,  # 파일시스템 루트 제공 안함
+                    sampling=None,  # LLM 샘플링 요청 지원 안함
+                ),
+                clientInfo=types.Implementation(
+                    name="ai-agent-backend",  # 우리 애플리케이션 이름
+                    version="1.0.0"  # 우리 애플리케이션 버전
+                )
+            )
+            
             self._session_context = ClientSession(read, write)
             
             try:
@@ -109,9 +124,9 @@ class MCPServerConnection:
                 self._connected = False
                 return False
 
-            # 세션 초기화
+            # 세션 초기화 (클라이언트 정보 전달)
             try:
-                await self._session.initialize()
+                await self._session.initialize(client_params)
                 logger.info(f"[{self.name}] ✓ MCP session initialized")
             except Exception as e:
                 logger.error(f"[{self.name}] ✗ Failed during session initialization")
