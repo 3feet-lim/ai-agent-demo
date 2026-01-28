@@ -220,9 +220,10 @@ class MCPManager:
         logger.info(f"Grafana Service Account Token exists: {bool(settings.grafana_service_account_token)}")
 
         # Grafana MCP 서버 설정 (Docker 컨테이너로 실행 중)
-        # Grafana MCP는 /sse 엔드포인트 사용
+        # Grafana MCP는 Streamable HTTP 모드로 실행 (-t streamable-http)
+        # /mcp 엔드포인트 사용
         if settings.grafana_url and settings.grafana_service_account_token:
-            grafana_mcp_url = settings.grafana_mcp_url or "http://grafana-mcp:8000/sse"
+            grafana_mcp_url = settings.grafana_mcp_url or "http://grafana-mcp:8000/mcp"
             self._servers["grafana"] = MCPServerConnection(
                 name="grafana",
                 url=grafana_mcp_url
