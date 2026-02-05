@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     # CloudWatch MCP 설정 (AWS 자격 증명은 위에서 관리)
     aws_profile: str | None = None
     cloudwatch_mcp_url: str | None = None  # CloudWatch MCP 서버 URL
+    cloudwatch_mcp_transport: str | None = None  # CloudWatch MCP 전송 방식 (streamable-http)
     aws_api_mcp_url: str | None = None  # AWS API MCP 서버 URL
 
     model_config = SettingsConfigDict(

@@ -21,32 +21,29 @@ services:
       start_period: 10s
 
   # CloudWatch MCP 서버
-  # 주의: CloudWatch MCP는 Streamable HTTP 모드를 제대로 지원하지 않는 것으로 보임
-  # initialize 요청에 응답하지 않아 타임아웃 발생
-  # 필요시 stdio 모드로 별도 구성 필요
-  # cloudwatch-mcp:
-  #   image: awslabs/cloudwatch-mcp-server:latest
-  #   container_name: cloudwatch-mcp
-  #   hostname: cloudwatch-mcp
-  #   env_file:
-  #     - .env
-  #   environment:
-  #     # Streamable HTTP 모드로 실행
-  #     - AWS_API_MCP_TRANSPORT=streamable-http
-  #     - AWS_API_MCP_HOST=0.0.0.0
-  #     - AWS_API_MCP_PORT=8000
-  #     - AUTH_TYPE=no-auth
-  #   networks:
-  #     app-network:
-  #       aliases:
-  #         - cloudwatch-mcp
-  #   restart: unless-stopped
-  #   healthcheck:
-  #     test: ["CMD-SHELL", "kill -0 1 2>/dev/null || exit 1"]
-  #     interval: 30s
-  #     timeout: 10s
-  #     retries: 3
-  #     start_period: 10s
+  cloudwatch-mcp:
+    image: cloudwatch-mcp-server:latest
+    container_name: cloudwatch-mcp
+    hostname: cloudwatch-mcp
+    env_file:
+      - .env
+    environment:
+      # Streamable HTTP 모드로 실행 (.env의 CLOUDWATCH_MCP_TRANSPORT로 제어)
+      - CLOUDWATCH_MCP_TRANSPORT=${CLOUDWATCH_MCP_TRANSPORT:-streamable-http}
+      - CLOUDWATCH_MCP_HOST=cloudwatch-mcp
+      - CLOUDWATCH_MCP_PORT=8000
+      - AUTH_TYPE=no-auth
+    networks:
+      app-network:
+        aliases:
+          - cloudwatch-mcp
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1 2>/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
   # AWS API MCP 서버
   aws-api-mcp:
@@ -110,8 +107,8 @@ services:
     depends_on:
       grafana-mcp:
         condition: service_healthy
-      # cloudwatch-mcp:
-      #   condition: service_healthy
+      cloudwatch-mcp:
+        condition: service_healthy
       aws-api-mcp:
         condition: service_healthy
     healthcheck:
