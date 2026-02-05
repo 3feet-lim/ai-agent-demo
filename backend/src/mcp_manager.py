@@ -218,6 +218,8 @@ class MCPManager:
         # 디버깅: 설정 값 로그
         logger.info(f"Grafana URL from settings: {settings.grafana_url}")
         logger.info(f"Grafana Service Account Token exists: {bool(settings.grafana_service_account_token)}")
+        logger.info(f"CloudWatch MCP Transport: {settings.cloudwatch_mcp_transport}")
+        logger.info(f"AWS Region: {settings.aws_region}")
 
         # Grafana MCP 서버 설정 (Docker 컨테이너로 실행 중)
         # Grafana MCP는 Streamable HTTP 모드로 실행 (-t streamable-http)
@@ -240,6 +242,8 @@ class MCPManager:
                 url=cloudwatch_mcp_url
             )
             logger.info(f"CloudWatch MCP server configured at {cloudwatch_mcp_url}")
+        else:
+            logger.info(f"CloudWatch MCP server NOT configured (aws_region={settings.aws_region}, transport={settings.cloudwatch_mcp_transport})")
 
         # AWS API MCP 서버 설정 (Docker 컨테이너로 실행 중)
         if settings.aws_region:
