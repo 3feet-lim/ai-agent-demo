@@ -2,6 +2,7 @@
 AI Agent Demo - FastAPI 백엔드
 LangChain + LangGraph + Bedrock 기반
 """
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -24,6 +25,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+async def _init_mcp_background():
+    """백그라운드에서 MCP 서버 연결 (uvicorn lifespan 타임아웃 회피)"""
+    try:
+        await get_mcp_manager()
+        logger.info("MCP manager initialized")
+    except BaseException as e:
+        logger.warning(f"MCP manager initialization failed, but continuing: {type(e).__name__}: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """애플리케이션 라이프사이클 관리"""
@@ -31,18 +41,22 @@ async def lifespan(app: FastAPI):
     logger.info("Starting AI Agent Demo...")
     await get_conversation_store()
     
-    # MCP 연결 시도 (실패해도 계속 진행)
-    try:
-        await get_mcp_manager()
-        logger.info("MCP manager initialized")
-    except BaseException as e:
-        logger.warning(f"MCP manager initialization failed, but continuing: {type(e).__name__}: {e}")
+    # MCP 연결을 백그라운드 태스크로 실행
+    # uvicorn lifespan 타임아웃에 영향받지 않도록 분리
+    mcp_task = asyncio.create_task(_init_mcp_background())
     
     logger.info(f"Using Bedrock model: {settings.bedrock_model_id}")
     logger.info(f"AWS Region: {settings.aws_region}")
     yield
     # 종료 시 정리
     logger.info("Shutting down AI Agent Demo...")
+    # 아직 MCP 초기화 중이면 완료 대기
+    if not mcp_task.done():
+        mcp_task.cancel()
+        try:
+            await mcp_task
+        except (asyncio.CancelledError, Exception):
+            pass
     try:
         mcp = await get_mcp_manager()
         await mcp.disconnect()
