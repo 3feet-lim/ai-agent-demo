@@ -35,8 +35,8 @@ async def lifespan(app: FastAPI):
     try:
         await get_mcp_manager()
         logger.info("MCP manager initialized")
-    except Exception as e:
-        logger.warning(f"MCP manager initialization failed, but continuing: {e}")
+    except BaseException as e:
+        logger.warning(f"MCP manager initialization failed, but continuing: {type(e).__name__}: {e}")
     
     logger.info(f"Using Bedrock model: {settings.bedrock_model_id}")
     logger.info(f"AWS Region: {settings.aws_region}")

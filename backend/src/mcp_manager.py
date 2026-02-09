@@ -2,6 +2,7 @@
 MCP (Model Context Protocol) 관리자
 Grafana MCP와 CloudWatch MCP 서버를 관리하고 도구를 제공합니다.
 """
+import asyncio
 import logging
 from typing import Optional, Any
 from dataclasses import dataclass, field
@@ -113,7 +114,7 @@ class MCPServerConnection:
             try:
                 await self._session.initialize()
                 logger.info(f"[{self.name}] ✓ MCP session initialized")
-            except Exception as e:
+            except BaseException as e:
                 logger.error(f"[{self.name}] ✗ Failed during session initialization")
                 logger.error(f"[{self.name}]   Error: {type(e).__name__}: {e}")
                 await self._cleanup_contexts()
@@ -123,7 +124,7 @@ class MCPServerConnection:
             logger.info(f"[{self.name}] ✅ Successfully connected to MCP server")
             return True
 
-        except Exception as e:
+        except BaseException as e:
             logger.error(f"[{self.name}] ✗ Unexpected error during connection process")
             logger.error(f"[{self.name}]   Error: {type(e).__name__}: {e}")
             self._connected = False
@@ -271,24 +272,39 @@ class MCPManager:
             self._initialized = True
             return True
 
+        max_retries = 3
+        retry_delay = 5  # 초
+
         connected_count = 0
         for name, server in self._servers.items():
-            try:
-                logger.info(f"Attempting to connect to MCP server: {name}")
-                if await server.connect():
-                    connected_count += 1
-                    # 도구 목록 캐시
-                    try:
-                        tools = await server.list_tools()
-                        for tool in tools:
-                            self._tools_cache[tool.name] = tool
-                            logger.info(f"Registered tool: {tool.name} from {name}")
-                    except Exception as e:
-                        logger.warning(f"Failed to list tools from {name}: {e}")
-                else:
-                    logger.warning(f"Failed to connect to {name}, but continuing with other servers")
-            except Exception as e:
-                logger.warning(f"Error connecting to {name}: {e}, but continuing with other servers")
+            connected = False
+            for attempt in range(1, max_retries + 1):
+                try:
+                    logger.info(f"Attempting to connect to MCP server: {name} (시도 {attempt}/{max_retries})")
+                    if await server.connect():
+                        connected = True
+                        connected_count += 1
+                        # 도구 목록 캐시
+                        try:
+                            tools = await server.list_tools()
+                            for tool in tools:
+                                self._tools_cache[tool.name] = tool
+                                logger.info(f"Registered tool: {tool.name} from {name}")
+                        except Exception as e:
+                            logger.warning(f"Failed to list tools from {name}: {e}")
+                        break  # 연결 성공 시 다음 서버로
+                    else:
+                        logger.warning(f"Failed to connect to {name} (시도 {attempt}/{max_retries})")
+                except BaseException as e:
+                    logger.warning(f"Error connecting to {name} (시도 {attempt}/{max_retries}): {type(e).__name__}: {e}")
+
+                # 마지막 시도가 아니면 대기 후 재시도
+                if attempt < max_retries:
+                    logger.info(f"[{name}] {retry_delay}초 후 재시도...")
+                    await asyncio.sleep(retry_delay)
+
+            if not connected:
+                logger.warning(f"[{name}] {max_retries}회 시도 후에도 연결 실패, 다음 서버로 진행")
 
         self._initialized = True
         
