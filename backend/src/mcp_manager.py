@@ -272,8 +272,8 @@ class MCPManager:
             self._initialized = True
             return True
 
-        max_retries = 3
-        retry_delay = 5  # 초
+        max_retries = 6
+        retry_delay = 5  # 초 (최대 대기: 약 30초)
 
         connected_count = 0
         for name, server in self._servers.items():
@@ -305,7 +305,6 @@ class MCPManager:
 
             if not connected:
                 logger.warning(f"[{name}] {max_retries}회 시도 후에도 연결 실패, 다음 서버로 진행")
-
         self._initialized = True
         
         if connected_count == 0:
