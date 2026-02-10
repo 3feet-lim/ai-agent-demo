@@ -56,7 +56,10 @@ class MCPServerConnection:
 
             # HTTP 클라이언트 생성
             logger.info(f"[{self.name}] Step 2/4: Creating HTTP client")
-            self._http_client = httpx.AsyncClient(timeout=30.0)
+            # 로그 조회 등 오래 걸리는 MCP 도구 호출을 위해 읽기 타임아웃을 넉넉하게 설정
+            self._http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(300.0, connect=30.0)
+            )
 
             # Streamable HTTP 클라이언트 컨텍스트 시작
             logger.info(f"[{self.name}] Step 3/4: Establishing streamable HTTP connection")
