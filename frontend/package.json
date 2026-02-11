@@ -10,12 +10,16 @@
   "dependencies": {
     "next": "15.5.3",
     "react": "19.1.0",
-    "react-dom": "19.1.0"
+    "react-dom": "19.1.0",
+    "react-markdown": "10.1.0",
+    "react-syntax-highlighter": "15.6.1",
+    "remark-gfm": "4.0.1"
   },
   "devDependencies": {
     "@types/node": "22.15.21",
     "@types/react": "19.1.4",
     "@types/react-dom": "19.1.5",
+    "@types/react-syntax-highlighter": "15.5.13",
     "typescript": "5.8.3"
   }
 }

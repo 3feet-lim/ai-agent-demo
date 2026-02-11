@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 
 interface Message {
   role: string;
@@ -10,30 +14,6 @@ interface Message {
 interface ChatAreaProps {
   messages: Message[];
   isLoading: boolean;
-}
-
-// 메시지 포맷팅 (마크다운 기본 지원)
-function formatMessage(content: string): string {
-  // XSS 방지
-  let escaped = content
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-
-  // 코드 블록 (```...```)
-  escaped = escaped.replace(
-    /```(\w*)\n?([\s\S]*?)```/g,
-    (_match, lang, code) =>
-      `<pre><code class="language-${lang}">${code.trim()}</code></pre>`
-  );
-
-  // 인라인 코드 (`...`)
-  escaped = escaped.replace(/`([^`]+)`/g, "<code>$1</code>");
-
-  // 줄바꿈
-  escaped = escaped.replace(/\n/g, "<br>");
-
-  return escaped;
 }
 
 export default function ChatArea({ messages, isLoading }: ChatAreaProps) {
@@ -60,10 +40,39 @@ export default function ChatArea({ messages, isLoading }: ChatAreaProps) {
           <div className="message-avatar">
             {msg.role === "user" ? "U" : "AI"}
           </div>
-          <div
-            className="message-content"
-            dangerouslySetInnerHTML={{ __html: formatMessage(msg.content) }}
-          />
+          <div className="message-content">
+            <Markdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                code({ className, children, ...props }) {
+                  const match = /language-(\w+)/.exec(className || "");
+                  const codeString = String(children).replace(/\n$/, "");
+
+                  // 코드 블록 (언어 지정된 경우)
+                  if (match) {
+                    return (
+                      <SyntaxHighlighter
+                        style={vscDarkPlus}
+                        language={match[1]}
+                        PreTag="div"
+                      >
+                        {codeString}
+                      </SyntaxHighlighter>
+                    );
+                  }
+
+                  // 인라인 코드
+                  return (
+                    <code className={className} {...props}>
+                      {children}
+                    </code>
+                  );
+                },
+              }}
+            >
+              {msg.content}
+            </Markdown>
+          </div>
         </div>
       ))}
 

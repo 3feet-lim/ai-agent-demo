@@ -1,5 +1,7 @@
 "use client";
 
+import Image from "next/image";
+
 interface Conversation {
   id: string;
   title: string | null;
@@ -22,6 +24,18 @@ export default function Sidebar({
 }: SidebarProps) {
   return (
     <aside className="sidebar">
+      <div className="sidebar-header">
+        {/* KB 로고: frontend/public/kb-logo.png 파일을 넣어주세요 */}
+        <Image
+          src="/kb-logo.png"
+          alt="KB국민은행"
+          width={80}
+          height={28}
+          className="sidebar-logo"
+          priority
+        />
+        <span className="sidebar-title">AI Agent</span>
+      </div>
       <button className="new-chat-btn" onClick={onNewChat}>
         + 새 대화
       </button>

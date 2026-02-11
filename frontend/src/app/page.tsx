@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect } from "react";
 import Sidebar from "./components/Sidebar";
 import ChatArea from "./components/ChatArea";
 import MessageInput from "./components/MessageInput";
+import ErrorBoundary from "./components/ErrorBoundary";
 
 const API_BASE = "/api";
 
@@ -65,10 +66,9 @@ export default function Home() {
     setMessages([]);
   }, []);
 
-  // 메시지 전송
+  // 메시지 전송 (SSE 스트리밍 지원, JSON 폴백)
   const handleSend = useCallback(
     async (content: string) => {
-      // 사용자 메시지 즉시 표시
       setMessages((prev) => [...prev, { role: "user", content }]);
       setIsLoading(true);
 
@@ -84,18 +84,75 @@ export default function Home() {
 
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-        const data = await res.json();
+        const contentType = res.headers.get("content-type") || "";
 
-        if (data.conversation_id) {
-          setCurrentId(data.conversation_id);
+        // SSE 스트리밍 응답 처리
+        if (contentType.includes("text/event-stream") && res.body) {
+          // 스트리밍 중 빈 assistant 메시지 추가
+          setMessages((prev) => [
+            ...prev,
+            { role: "assistant", content: "" },
+          ]);
+
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+          let convId = currentId;
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
+
+            for (const line of lines) {
+              if (!line.startsWith("data: ")) continue;
+              const data = line.slice(6);
+              if (data === "[DONE]") continue;
+
+              try {
+                const parsed = JSON.parse(data);
+
+                if (parsed.conversation_id && !convId) {
+                  convId = parsed.conversation_id;
+                  setCurrentId(convId);
+                }
+
+                if (parsed.token) {
+                  // 마지막 assistant 메시지에 토큰 추가
+                  setMessages((prev) => {
+                    const updated = [...prev];
+                    const last = updated[updated.length - 1];
+                    if (last?.role === "assistant") {
+                      updated[updated.length - 1] = {
+                        ...last,
+                        content: last.content + parsed.token,
+                      };
+                    }
+                    return updated;
+                  });
+                }
+              } catch {
+                // JSON 파싱 실패 시 무시
+              }
+            }
+          }
+        } else {
+          // 일반 JSON 응답 (현재 backend 호환)
+          const data = await res.json();
+
+          if (data.conversation_id) {
+            setCurrentId(data.conversation_id);
+          }
+
+          setMessages((prev) => [
+            ...prev,
+            { role: "assistant", content: data.response },
+          ]);
         }
 
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", content: data.response },
-        ]);
-
-        // 대화 목록 갱신
         loadConversations();
       } catch (err) {
         console.error("메시지 전송 실패:", err);
@@ -126,7 +183,9 @@ export default function Home() {
           <h1>AI Agent Demo</h1>
           <span className="model-badge">Claude Sonnet</span>
         </header>
-        <ChatArea messages={messages} isLoading={isLoading} />
+        <ErrorBoundary>
+          <ChatArea messages={messages} isLoading={isLoading} />
+        </ErrorBoundary>
         <MessageInput onSend={handleSend} disabled={isLoading} />
       </main>
     </div>
