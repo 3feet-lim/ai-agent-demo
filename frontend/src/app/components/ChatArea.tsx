@@ -3,8 +3,9 @@
 import { useEffect, useRef } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
 
 interface Message {
   role: string;
@@ -15,6 +16,25 @@ interface ChatAreaProps {
   messages: Message[];
   isLoading: boolean;
 }
+
+// 화이트 톤에 맞춘 코드 블록 커스텀 스타일
+const codeTheme = {
+  ...oneLight,
+  'pre[class*="language-"]': {
+    ...oneLight['pre[class*="language-"]'],
+    background: "#f5f6f8",
+    borderRadius: "8px",
+    padding: "16px",
+    margin: "10px 0",
+    fontSize: "13px",
+    border: "1px solid #e0e3e8",
+  },
+  'code[class*="language-"]': {
+    ...oneLight['code[class*="language-"]'],
+    background: "transparent",
+    fontSize: "13px",
+  },
+};
 
 export default function ChatArea({ messages, isLoading }: ChatAreaProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -43,16 +63,16 @@ export default function ChatArea({ messages, isLoading }: ChatAreaProps) {
           <div className="message-content">
             <Markdown
               remarkPlugins={[remarkGfm]}
+              rehypePlugins={[rehypeRaw]}
               components={{
                 code({ className, children, ...props }) {
                   const match = /language-(\w+)/.exec(className || "");
                   const codeString = String(children).replace(/\n$/, "");
 
-                  // 코드 블록 (언어 지정된 경우)
                   if (match) {
                     return (
                       <SyntaxHighlighter
-                        style={vscDarkPlus}
+                        style={codeTheme}
                         language={match[1]}
                         PreTag="div"
                       >

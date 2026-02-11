@@ -264,13 +264,14 @@ body {
 }
 
 .message-content pre {
-  background-color: #1e1e1e;
-  color: #d4d4d4;
+  background-color: #f5f6f8;
+  color: #1a1a1a;
   padding: 14px;
   border-radius: 8px;
   overflow-x: auto;
   margin: 10px 0;
   font-size: 13px;
+  border: 1px solid var(--border-color);
 }
 
 .message-content code {
