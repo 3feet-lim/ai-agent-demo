@@ -7,7 +7,7 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -135,7 +135,7 @@ async def get_status():
 
 
 @app.post("/api/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, x_user_id: Optional[str] = Header(None)):
     """채팅 메시지 처리"""
     try:
         store = await get_conversation_store()
@@ -144,7 +144,7 @@ async def chat(request: ChatRequest):
         # 새 대화 또는 기존 대화
         conversation_id = request.conversation_id
         if not conversation_id:
-            conversation_id = await store.create_conversation()
+            conversation_id = await store.create_conversation(user_id=x_user_id)
 
         # 기존 메시지 히스토리 로드
         history = await store.get_messages(conversation_id)
@@ -167,11 +167,11 @@ async def chat(request: ChatRequest):
 
 
 @app.get("/api/conversations", response_model=list[ConversationSummary])
-async def list_conversations():
-    """대화 목록 조회"""
+async def list_conversations(x_user_id: Optional[str] = Header(None)):
+    """대화 목록 조회 (사용자별 필터링)"""
     try:
         store = await get_conversation_store()
-        conversations = await store.list_conversations()
+        conversations = await store.list_conversations(user_id=x_user_id)
         return conversations
     except Exception as e:
         logger.error(f"Error listing conversations: {e}")

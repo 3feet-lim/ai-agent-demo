@@ -29,10 +29,15 @@ class ConversationStore:
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS conversations (
                     id TEXT PRIMARY KEY,
+                    user_id TEXT,
                     title TEXT,
                     created_at TEXT,
                     updated_at TEXT
                 )
+            """)
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_conversations_user
+                ON conversations(user_id)
             """)
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS messages (
@@ -60,15 +65,15 @@ class ConversationStore:
             """)
             await db.commit()
 
-    async def create_conversation(self, title: Optional[str] = None) -> str:
+    async def create_conversation(self, title: Optional[str] = None, user_id: Optional[str] = None) -> str:
         """새 대화 생성"""
         conversation_id = str(uuid.uuid4())
         now = datetime.utcnow().isoformat()
 
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
-                "INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
-                (conversation_id, title, now, now)
+                "INSERT INTO conversations (id, user_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                (conversation_id, user_id, title, now, now)
             )
             await db.commit()
 
@@ -152,20 +157,33 @@ class ConversationStore:
             messages = await cursor.fetchall()
             return [{"role": m["role"], "content": m["content"]} for m in messages]
 
-    async def list_conversations(self, limit: int = 50) -> list[dict]:
-        """대화 목록 조회"""
+    async def list_conversations(self, limit: int = 50, user_id: Optional[str] = None) -> list[dict]:
+        """대화 목록 조회 (user_id 기반 필터링)"""
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
-            cursor = await db.execute(
-                """
-                SELECT c.id, c.title, c.updated_at,
-                       (SELECT content FROM messages WHERE conversation_id = c.id ORDER BY created_at LIMIT 1) as preview
-                FROM conversations c
-                ORDER BY c.updated_at DESC
-                LIMIT ?
-                """,
-                (limit,)
-            )
+            if user_id:
+                cursor = await db.execute(
+                    """
+                    SELECT c.id, c.title, c.updated_at,
+                           (SELECT content FROM messages WHERE conversation_id = c.id ORDER BY created_at LIMIT 1) as preview
+                    FROM conversations c
+                    WHERE c.user_id = ?
+                    ORDER BY c.updated_at DESC
+                    LIMIT ?
+                    """,
+                    (user_id, limit,)
+                )
+            else:
+                cursor = await db.execute(
+                    """
+                    SELECT c.id, c.title, c.updated_at,
+                           (SELECT content FROM messages WHERE conversation_id = c.id ORDER BY created_at LIMIT 1) as preview
+                    FROM conversations c
+                    ORDER BY c.updated_at DESC
+                    LIMIT ?
+                    """,
+                    (limit,)
+                )
             rows = await cursor.fetchall()
             return [
                 {

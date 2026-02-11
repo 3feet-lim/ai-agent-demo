@@ -1,12 +1,23 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import Sidebar from "./components/Sidebar";
 import ChatArea from "./components/ChatArea";
 import MessageInput from "./components/MessageInput";
 import ErrorBoundary from "./components/ErrorBoundary";
 
 const API_BASE = "/api";
+
+// localStorage 기반 익명 사용자 ID 생성/조회
+function getUserId(): string {
+  if (typeof window === "undefined") return "";
+  let userId = localStorage.getItem("ai-agent-user-id");
+  if (!userId) {
+    userId = crypto.randomUUID();
+    localStorage.setItem("ai-agent-user-id", userId);
+  }
+  return userId;
+}
 
 interface Message {
   role: string;
@@ -25,40 +36,62 @@ export default function Home() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const userIdRef = useRef("");
+
+  // 클라이언트 마운트 시 userId 초기화
+  useEffect(() => {
+    userIdRef.current = getUserId();
+  }, []);
+
+  // 공통 헤더 생성
+  const getHeaders = useCallback(
+    (extra?: Record<string, string>) => ({
+      "X-User-Id": userIdRef.current,
+      ...extra,
+    }),
+    []
+  );
 
   // 대화 목록 로드
   const loadConversations = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/conversations`);
+      const res = await fetch(`${API_BASE}/conversations`, {
+        headers: getHeaders(),
+      });
       if (res.ok) {
         setConversations(await res.json());
       }
     } catch (err) {
       console.error("대화 목록 로드 실패:", err);
     }
-  }, []);
+  }, [getHeaders]);
 
   useEffect(() => {
     loadConversations();
   }, [loadConversations]);
 
   // 특정 대화 로드
-  const handleSelectConversation = useCallback(async (id: string) => {
-    try {
-      const res = await fetch(`${API_BASE}/conversations/${id}`);
-      if (!res.ok) return;
-      const data = await res.json();
-      setCurrentId(id);
-      setMessages(
-        data.messages?.map((m: Message) => ({
-          role: m.role,
-          content: m.content,
-        })) || []
-      );
-    } catch (err) {
-      console.error("대화 로드 실패:", err);
-    }
-  }, []);
+  const handleSelectConversation = useCallback(
+    async (id: string) => {
+      try {
+        const res = await fetch(`${API_BASE}/conversations/${id}`, {
+          headers: getHeaders(),
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        setCurrentId(id);
+        setMessages(
+          data.messages?.map((m: Message) => ({
+            role: m.role,
+            content: m.content,
+          })) || []
+        );
+      } catch (err) {
+        console.error("대화 로드 실패:", err);
+      }
+    },
+    [getHeaders]
+  );
 
   // 새 대화
   const handleNewChat = useCallback(() => {
@@ -73,13 +106,12 @@ export default function Home() {
       setIsLoading(true);
 
       try {
-        // 도구 호출이 여러 번 반복될 수 있으므로 타임아웃을 5분으로 설정
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 300_000);
 
         const res = await fetch(`${API_BASE}/chat`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: getHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({
             message: content,
             conversation_id: currentId,
@@ -95,7 +127,6 @@ export default function Home() {
 
         // SSE 스트리밍 응답 처리
         if (contentType.includes("text/event-stream") && res.body) {
-          // 스트리밍 중 빈 assistant 메시지 추가
           setMessages((prev) => [
             ...prev,
             { role: "assistant", content: "" },
@@ -128,7 +159,6 @@ export default function Home() {
                 }
 
                 if (parsed.token) {
-                  // 마지막 assistant 메시지에 토큰 추가
                   setMessages((prev) => {
                     const updated = [...prev];
                     const last = updated[updated.length - 1];
@@ -178,7 +208,7 @@ export default function Home() {
         setIsLoading(false);
       }
     },
-    [currentId, loadConversations]
+    [currentId, loadConversations, getHeaders]
   );
 
   return (
