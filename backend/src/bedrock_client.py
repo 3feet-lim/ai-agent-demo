@@ -10,6 +10,7 @@ from langchain_aws import ChatBedrock
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool
 from langgraph.graph import StateGraph, MessagesState, START, END
+from langgraph.errors import GraphRecursionError
 from pydantic import BaseModel, Field, create_model
 
 from .config import get_settings
@@ -375,6 +376,13 @@ class BedrockAgent:
                 return str(last_ai_msg.content)
 
             return "응답을 생성할 수 없습니다."
+
+        except GraphRecursionError:
+            logger.warning("도구 호출 횟수 제한(recursion_limit=30)에 도달했습니다.")
+            return (
+                "죄송합니다. 요청을 처리하는 과정에서 도구 호출 횟수 제한에 도달했습니다. "
+                "질문의 범위를 좁히거나, 더 구체적으로 질문해 주시면 더 나은 결과를 드릴 수 있습니다."
+            )
 
         except Exception as e:
             logger.error(f"Error during chat: {e}")
