@@ -81,7 +81,7 @@ class MCPToolWrapper(BaseTool):
             return str(result)
         except Exception as e:
             logger.error(f"Tool execution error for {self.name}: {e}")
-            return f"도구 실행 오류: {str(e)}"
+            return f"Tool execution error: {str(e)}"
 
     def _run(self, **kwargs) -> str:
         """동기 도구 실행 (사용하지 않음)"""
@@ -96,7 +96,7 @@ def create_mcp_tool(mcp_tool: MCPTool, mcp_manager) -> BaseTool:
 
     return MCPToolWrapper(
         name=mcp_tool.name,
-        description=mcp_tool.description or f"{mcp_tool.name} 도구",
+        description=mcp_tool.description or f"{mcp_tool.name} tool",
         args_schema=args_model,
         mcp_tool=mcp_tool,
         mcp_manager=mcp_manager,
@@ -187,13 +187,13 @@ class BedrockAgent:
                     logger.info(f"Executing tool: {tool_name} with args: {tool_args}")
 
                     # 도구 찾기 및 실행
-                    result = "도구를 찾을 수 없습니다."
+                    result = "Tool not found."
                     for tool in self._tools:
                         if tool.name == tool_name:
                             try:
                                 result = await tool.ainvoke(tool_args)
                             except Exception as e:
-                                result = f"도구 실행 오류: {str(e)}"
+                                result = f"Tool execution error: {str(e)}"
                                 logger.error(f"Tool execution error: {e}")
                             break
 
@@ -230,33 +230,70 @@ class BedrockAgent:
         """현재 시간 정보 생성"""
         now_utc = datetime.now(timezone.utc)
         now_kst = now_utc.astimezone(timezone(timedelta(hours=9)))
-
-        return f"""현재 시간 정보:
-- UTC: {now_utc.strftime('%Y-%m-%d %H:%M:%S')}
-- KST (한국 시간): {now_kst.strftime('%Y-%m-%d %H:%M:%S')}
-"""
+        utc_str = now_utc.strftime('%Y-%m-%d %H:%M:%S')
+        kst_str = now_kst.strftime('%Y-%m-%d %H:%M:%S')
+        return f"Current time - UTC: {utc_str} / KST: {kst_str}"
 
     def _build_system_prompt(self, mcp_context: MCPContext) -> str:
-        """시스템 프롬프트 생성"""
-        base_prompt = f"""당신은 도움이 되는 AI 어시스턴트입니다.
-사용자의 질문에 정확하고 친절하게 답변해 주세요.
-한국어로 대화합니다.
+        """시스템 프롬프트 생성 (영어로 작성, 응답은 한국어 지시)"""
+        time_info = self._get_current_time_info()
 
-{self._get_current_time_info()}
-"""
+        lines = [
+            "You are a helpful AI assistant.",
+            "IMPORTANT: Always respond to the user in Korean (한국어).",
+            "",
+            time_info,
+            "",
+            "## Infrastructure Query Procedure",
+            "",
+            "When the user asks about infrastructure status, server performance,",
+            "incidents, or resource usage, you MUST follow these steps in order:",
+            "",
+            "### Step 1: Grafana Metrics (Highest Priority)",
+            "- First, use Grafana tools to query dashboard/panel metrics.",
+            "- Check key indicators: CPU, memory, network, disk, request count, response time.",
+            "- Identify time windows with anomalies or spikes.",
+            "",
+            "### Step 2: CloudWatch Logs (Detailed Analysis)",
+            "- If anomalies are found in Grafana metrics, use CloudWatch MCP tools",
+            "  to query logs for the relevant time window.",
+            "- Specify appropriate log groups and filter patterns to search for error/warning logs.",
+            "- Find the root cause of metric anomalies from the logs.",
+            "",
+            "### Step 3: AWS CLI (Additional Investigation)",
+            "- If the above steps do not provide sufficient information,",
+            "  use AWS CLI tools for further investigation.",
+            "- Examples:",
+            "  - EC2 instance status",
+            "  - ECS/EKS service and task status",
+            "  - RDS instance status and events",
+            "  - ALB/NLB target group health checks",
+            "  - Auto Scaling activity history",
+            "",
+            "### Response Guidelines",
+            "- Summarize the current state by combining information from each step.",
+            "- If anomalies are found, provide root cause analysis and recommended actions.",
+            "- Present numerical data concretely and compare against normal ranges.",
+            "- ALWAYS respond in Korean regardless of the language of tool outputs.",
+        ]
+
+        base_prompt = "\n".join(lines)
 
         # 도구가 있으면 사용 안내 추가
         if mcp_context.tools:
-            tool_list = "\n".join([f"- {t.name}: {t.description}" for t in mcp_context.tools])
-            base_prompt += f"""
-사용 가능한 도구:
-{tool_list}
-
-중요: 메트릭이나 대시보드 정보를 요청받으면 반드시 도구를 사용하여 실제 데이터를 조회하세요.
-추측하거나 가상의 데이터를 생성하지 마세요.
-"""
+            tool_list = "\n".join(
+                [f"- {t.name}: {t.description}" for t in mcp_context.tools]
+            )
+            base_prompt += (
+                "\n\nAvailable tools:\n"
+                + tool_list
+                + "\n\nCRITICAL: When asked about metrics or dashboard information, "
+                "you MUST use tools to query real data. "
+                "Do NOT guess or fabricate data."
+            )
 
         return base_prompt
+
 
     def _convert_to_langchain_messages(
         self,
