@@ -4,36 +4,37 @@ import { useEffect, useRef } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+// 모든 언어가 포함된 Prism 번들 사용 (별도 등록 불필요)
+import SyntaxHighlighter from "react-syntax-highlighter/dist/esm/prism-light";
 import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
+import bash from "react-syntax-highlighter/dist/esm/languages/prism/bash";
+import yaml from "react-syntax-highlighter/dist/esm/languages/prism/yaml";
+import json from "react-syntax-highlighter/dist/esm/languages/prism/json";
+import sql from "react-syntax-highlighter/dist/esm/languages/prism/sql";
+import hcl from "react-syntax-highlighter/dist/esm/languages/prism/hcl";
+import docker from "react-syntax-highlighter/dist/esm/languages/prism/docker";
+import ini from "react-syntax-highlighter/dist/esm/languages/prism/ini";
+import nginx from "react-syntax-highlighter/dist/esm/languages/prism/nginx";
+import python from "react-syntax-highlighter/dist/esm/languages/prism/python";
+import javascript from "react-syntax-highlighter/dist/esm/languages/prism/javascript";
+import typescript from "react-syntax-highlighter/dist/esm/languages/prism/typescript";
 
-// Prism 추가 언어 등록 (bash, shell, yaml, json, sql, hcl 등)
-import { Prism } from "react-syntax-highlighter";
-import bash from "refractor/lang/bash";
-import shell from "refractor/lang/shell-session";
-import yaml from "refractor/lang/yaml";
-import json from "refractor/lang/json";
-import sql from "refractor/lang/sql";
-import hcl from "refractor/lang/hcl";
-import docker from "refractor/lang/docker";
-import ini from "refractor/lang/ini";
-import nginx from "refractor/lang/nginx";
-
-// @ts-expect-error: registerLanguage 타입 미노출
-Prism.registerLanguage("bash", bash);
-Prism.registerLanguage("shell", bash);
-Prism.registerLanguage("sh", bash);
-Prism.registerLanguage("shell-session", shell);
-Prism.registerLanguage("yaml", yaml);
-Prism.registerLanguage("yml", yaml);
-Prism.registerLanguage("json", json);
-Prism.registerLanguage("sql", sql);
-Prism.registerLanguage("hcl", hcl);
-Prism.registerLanguage("terraform", hcl);
-Prism.registerLanguage("docker", docker);
-Prism.registerLanguage("dockerfile", docker);
-Prism.registerLanguage("ini", ini);
-Prism.registerLanguage("nginx", nginx);
+SyntaxHighlighter.registerLanguage("bash", bash);
+SyntaxHighlighter.registerLanguage("shell", bash);
+SyntaxHighlighter.registerLanguage("sh", bash);
+SyntaxHighlighter.registerLanguage("yaml", yaml);
+SyntaxHighlighter.registerLanguage("yml", yaml);
+SyntaxHighlighter.registerLanguage("json", json);
+SyntaxHighlighter.registerLanguage("sql", sql);
+SyntaxHighlighter.registerLanguage("hcl", hcl);
+SyntaxHighlighter.registerLanguage("terraform", hcl);
+SyntaxHighlighter.registerLanguage("docker", docker);
+SyntaxHighlighter.registerLanguage("dockerfile", docker);
+SyntaxHighlighter.registerLanguage("ini", ini);
+SyntaxHighlighter.registerLanguage("nginx", nginx);
+SyntaxHighlighter.registerLanguage("python", python);
+SyntaxHighlighter.registerLanguage("javascript", javascript);
+SyntaxHighlighter.registerLanguage("typescript", typescript);
 
 interface Message {
   role: string;
