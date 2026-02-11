@@ -137,13 +137,16 @@ export default function ChatArea({ messages, isLoading }: ChatAreaProps) {
                   // 언어가 명시된 경우
                   if (match) {
                     return (
-                      <SyntaxHighlighter
-                        style={codeTheme}
-                        language={match[1]}
-                        PreTag="div"
-                      >
-                        {codeString}
-                      </SyntaxHighlighter>
+                      <div className="code-block-wrapper">
+                        <span className="code-lang-label">{match[1]}</span>
+                        <SyntaxHighlighter
+                          style={codeTheme}
+                          language={match[1]}
+                          PreTag="div"
+                        >
+                          {codeString}
+                        </SyntaxHighlighter>
+                      </div>
                     );
                   }
 
@@ -151,13 +154,16 @@ export default function ChatArea({ messages, isLoading }: ChatAreaProps) {
                   if (isMultiLine) {
                     const lang = detectLanguage(codeString);
                     return (
-                      <SyntaxHighlighter
-                        style={codeTheme}
-                        language={lang}
-                        PreTag="div"
-                      >
-                        {codeString}
-                      </SyntaxHighlighter>
+                      <div className="code-block-wrapper">
+                        <span className="code-lang-label">{lang}</span>
+                        <SyntaxHighlighter
+                          style={codeTheme}
+                          language={lang}
+                          PreTag="div"
+                        >
+                          {codeString}
+                        </SyntaxHighlighter>
+                      </div>
                     );
                   }
 
