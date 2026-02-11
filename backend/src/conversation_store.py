@@ -35,6 +35,11 @@ class ConversationStore:
                     updated_at TEXT
                 )
             """)
+            # 기존 DB 마이그레이션: user_id 컬럼이 없으면 추가
+            try:
+                await db.execute("ALTER TABLE conversations ADD COLUMN user_id TEXT")
+            except Exception:
+                pass  # 이미 존재하면 무시
             await db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_conversations_user
                 ON conversations(user_id)
