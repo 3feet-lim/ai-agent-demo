@@ -2,7 +2,9 @@
 LangChain + LangGraph 기반 Bedrock 클라이언트
 MCP 도구를 실제로 호출하는 ReAct 에이전트 구현
 """
+import json
 import logging
+from collections import Counter
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Any
 
@@ -65,6 +67,79 @@ class MCPToolWrapper(BaseTool):
     class Config:
         arbitrary_types_allowed = True
 
+    @staticmethod
+    def _enrich_with_stats(raw: str) -> str:
+        """도구 결과에 통계 요약을 자동 추가 (LLM 카운팅 오류 방지)"""
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return raw
+
+        summary_parts = []
+
+        # 최상위 리스트인 경우
+        if isinstance(data, list):
+            summary_parts.append(f"[통계] 총 항목 수: {len(data)}")
+            # 리스트 내 dict에서 상태 필드 자동 집계
+            if data and isinstance(data[0], dict):
+                for key in ("State", "state", "Status", "status",
+                            "InstanceState", "instanceState"):
+                    vals = []
+                    for item in data:
+                        val = item.get(key)
+                        if val is None and isinstance(item.get("State"), dict):
+                            val = item["State"].get("Name")
+                        if val is not None:
+                            vals.append(str(val))
+                    if vals:
+                        counts = Counter(vals)
+                        breakdown = ", ".join(
+                            f"{k}: {v}개" for k, v in counts.most_common()
+                        )
+                        summary_parts.append(f"[통계] {key}별 분포: {breakdown}")
+                        break
+
+        # dict 안에 리스트가 있는 경우 (예: {"Reservations": [...]})
+        elif isinstance(data, dict):
+            for key, val in data.items():
+                if isinstance(val, list):
+                    summary_parts.append(f"[통계] {key} 항목 수: {len(val)}")
+                    # 중첩 리스트 (예: Reservations → Instances)
+                    nested_items = []
+                    for item in val:
+                        if isinstance(item, dict):
+                            for sub_key, sub_val in item.items():
+                                if isinstance(sub_val, list):
+                                    nested_items.extend(sub_val)
+                    if nested_items:
+                        summary_parts.append(
+                            f"[통계] 중첩 항목 총 수: {len(nested_items)}"
+                        )
+                        if nested_items and isinstance(nested_items[0], dict):
+                            for sk in ("State", "state", "Status", "status"):
+                                vals = []
+                                for ni in nested_items:
+                                    sv = ni.get(sk)
+                                    if sv is None and isinstance(ni.get("State"), dict):
+                                        sv = ni["State"].get("Name")
+                                    if sv is not None:
+                                        vals.append(str(sv))
+                                if vals:
+                                    counts = Counter(vals)
+                                    breakdown = ", ".join(
+                                        f"{k}: {v}개" for k, v in counts.most_common()
+                                    )
+                                    summary_parts.append(
+                                        f"[통계] {sk}별 분포: {breakdown}"
+                                    )
+                                    break
+
+        if not summary_parts:
+            return raw
+
+        stats_header = "\n".join(summary_parts)
+        return f"{stats_header}\n\n{raw}"
+
     async def _arun(self, **kwargs) -> str:
         """비동기 도구 실행"""
         try:
@@ -79,8 +154,12 @@ class MCPToolWrapper(BaseTool):
                         contents.append(item.text)
                     else:
                         contents.append(str(item))
-                return "\n".join(contents)
-            return str(result)
+                raw = "\n".join(contents)
+            else:
+                raw = str(result)
+
+            # 통계 요약 자동 추가
+            return self._enrich_with_stats(raw)
         except Exception as e:
             logger.error(f"Tool execution error for {self.name}: {e}")
             return f"Tool execution error: {str(e)}"
@@ -277,6 +356,13 @@ class BedrockAgent:
             "- If anomalies are found, provide root cause analysis and recommended actions.",
             "- Present numerical data concretely and compare against normal ranges.",
             "- ALWAYS respond in Korean regardless of the language of tool outputs.",
+            "",
+            "### Counting and Statistics Rules",
+            "- Tool results include a [통계] header with pre-calculated counts and breakdowns.",
+            "- ALWAYS use the [통계] numbers as the authoritative source. Do NOT count items yourself.",
+            "- When listing items, cross-check your list count against the [통계] total.",
+            "- If you list N items but [통계] says M, trust [통계] and correct your response.",
+            "- Never guess or approximate counts. If unsure, re-query the tool.",
         ]
 
         base_prompt = "\n".join(lines)
