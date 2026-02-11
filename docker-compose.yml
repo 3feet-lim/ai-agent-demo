@@ -47,7 +47,8 @@ services:
 
   # AWS API MCP 서버
   aws-api-mcp:
-    image: awslabs/aws-api-mcp-server:latest
+    #image: awslabs/aws-api-mcp-server:latest
+    image: aws-api-mcp:latest
     container_name: aws-api-mcp
     hostname: aws-api-mcp
     env_file:
