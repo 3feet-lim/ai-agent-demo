@@ -48,6 +48,16 @@ class ConversationStore:
                 CREATE INDEX IF NOT EXISTS idx_messages_conversation
                 ON messages(conversation_id)
             """)
+            # 대화 요약 테이블 (하이브리드 메모리용)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS conversation_summaries (
+                    conversation_id TEXT PRIMARY KEY,
+                    summary TEXT,
+                    summarized_until INTEGER DEFAULT 0,
+                    updated_at TEXT,
+                    FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+                )
+            """)
             await db.commit()
 
     async def create_conversation(self, title: Optional[str] = None) -> str:
@@ -174,12 +184,64 @@ class ConversationStore:
                 "DELETE FROM messages WHERE conversation_id = ?",
                 (conversation_id,)
             )
+            await db.execute(
+                "DELETE FROM conversation_summaries WHERE conversation_id = ?",
+                (conversation_id,)
+            )
             cursor = await db.execute(
                 "DELETE FROM conversations WHERE id = ?",
                 (conversation_id,)
             )
             await db.commit()
             return cursor.rowcount > 0
+
+    async def get_summary(self, conversation_id: str) -> Optional[dict]:
+        """대화 요약 조회"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT summary, summarized_until FROM conversation_summaries WHERE conversation_id = ?",
+                (conversation_id,)
+            )
+            row = await cursor.fetchone()
+            if not row:
+                return None
+            return {
+                "summary": row["summary"],
+                "summarized_until": row["summarized_until"],
+            }
+
+    async def save_summary(
+        self,
+        conversation_id: str,
+        summary: str,
+        summarized_until: int,
+    ) -> None:
+        """대화 요약 저장 (upsert)"""
+        now = datetime.utcnow().isoformat()
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """
+                INSERT INTO conversation_summaries (conversation_id, summary, summarized_until, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(conversation_id)
+                DO UPDATE SET summary = excluded.summary,
+                              summarized_until = excluded.summarized_until,
+                              updated_at = excluded.updated_at
+                """,
+                (conversation_id, summary, summarized_until, now)
+            )
+            await db.commit()
+
+    async def get_message_count(self, conversation_id: str) -> int:
+        """대화의 총 메시지 수 조회"""
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                "SELECT COUNT(*) FROM messages WHERE conversation_id = ?",
+                (conversation_id,)
+            )
+            row = await cursor.fetchone()
+            return row[0] if row else 0
 
 
 # 싱글톤 인스턴스

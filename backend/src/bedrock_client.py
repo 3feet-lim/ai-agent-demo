@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, create_model
 
 from .config import get_settings
 from .mcp_manager import get_mcp_manager, MCPContext, MCPTool
+from .conversation_store import get_conversation_store
 
 logger = logging.getLogger(__name__)
 
@@ -295,6 +296,91 @@ class BedrockAgent:
 
         return base_prompt
 
+    # 슬라이딩 윈도우 크기 (최근 N개 메시지는 원문 유지)
+    WINDOW_SIZE = 20
+
+    async def _summarize_messages(self, messages: list[dict]) -> str:
+        """오래된 메시지들을 LLM으로 요약"""
+        if not messages:
+            return ""
+
+        conversation_text = "\n".join(
+            [f"{m['role']}: {m['content']}" for m in messages]
+        )
+
+        summary_prompt = [
+            SystemMessage(content=(
+                "You are a conversation summarizer. "
+                "Summarize the following conversation concisely in Korean. "
+                "Preserve key facts, decisions, tool results, and important context. "
+                "Keep the summary under 500 words."
+            )),
+            HumanMessage(content=conversation_text),
+        ]
+
+        response = await self._llm.ainvoke(summary_prompt)
+
+        if isinstance(response.content, str):
+            return response.content
+        return str(response.content)
+
+    async def _build_hybrid_history(
+        self,
+        conversation_id: str,
+        all_messages: list[dict],
+    ) -> list[dict]:
+        """하이브리드 메모리: 요약 + 슬라이딩 윈도우 결합"""
+        total = len(all_messages)
+
+        # 윈도우 이내면 전체 반환 (요약 불필요)
+        if total <= self.WINDOW_SIZE:
+            return all_messages
+
+        # 윈도우 밖 메시지 = 요약 대상
+        old_messages = all_messages[:-self.WINDOW_SIZE]
+        recent_messages = all_messages[-self.WINDOW_SIZE:]
+
+        # 기존 요약 확인
+        store = await get_conversation_store()
+        existing = await store.get_summary(conversation_id)
+
+        old_count = len(old_messages)
+
+        # 요약이 없거나 새로 요약할 메시지가 있으면 갱신
+        if not existing or existing["summarized_until"] < old_count:
+            # 기존 요약이 있으면 그 위에 추가 메시지만 요약
+            if existing and existing["summarized_until"] > 0:
+                new_portion = old_messages[existing["summarized_until"]:]
+                combined_text = (
+                    f"기존 요약:\n{existing['summary']}\n\n"
+                    f"추가 대화:\n"
+                    + "\n".join([f"{m['role']}: {m['content']}" for m in new_portion])
+                )
+                summary_messages = [
+                    SystemMessage(content=(
+                        "You are a conversation summarizer. "
+                        "Merge the existing summary with the new conversation into one concise summary in Korean. "
+                        "Preserve key facts, decisions, tool results, and important context. "
+                        "Keep the summary under 500 words."
+                    )),
+                    HumanMessage(content=combined_text),
+                ]
+                response = await self._llm.ainvoke(summary_messages)
+                summary = response.content if isinstance(response.content, str) else str(response.content)
+            else:
+                summary = await self._summarize_messages(old_messages)
+
+            await store.save_summary(conversation_id, summary, old_count)
+            logger.info(f"대화 요약 갱신: conversation_id={conversation_id}, summarized_until={old_count}")
+        else:
+            summary = existing["summary"]
+
+        # 요약을 system 메시지로 앞에 붙이고 최근 메시지 결합
+        hybrid = [
+            {"role": "system", "content": f"[이전 대화 요약]\n{summary}"},
+        ] + recent_messages
+
+        return hybrid
 
     def _convert_to_langchain_messages(
         self,
@@ -317,13 +403,17 @@ class BedrockAgent:
                 messages.append(HumanMessage(content=content))
             elif role == "assistant":
                 messages.append(AIMessage(content=content))
+            elif role == "system":
+                # 하이브리드 메모리의 요약 메시지
+                messages.append(SystemMessage(content=content))
 
         return messages
 
     async def chat(
         self,
         message: str,
-        history: Optional[list[dict]] = None
+        history: Optional[list[dict]] = None,
+        conversation_id: Optional[str] = None,
     ) -> str:
         """
         대화 처리
@@ -331,6 +421,7 @@ class BedrockAgent:
         Args:
             message: 사용자 메시지
             history: 이전 대화 히스토리 [{"role": "user"|"assistant", "content": "..."}]
+            conversation_id: 대화 ID (하이브리드 메모리 사용 시 필요)
 
         Returns:
             AI 응답 텍스트
@@ -348,6 +439,12 @@ class BedrockAgent:
 
         # 히스토리에 현재 메시지 추가
         current_history = history + [{"role": "user", "content": message}]
+
+        # 하이브리드 메모리 적용 (conversation_id가 있을 때)
+        if conversation_id and len(current_history) > self.WINDOW_SIZE:
+            current_history = await self._build_hybrid_history(
+                conversation_id, current_history
+            )
 
         # LangChain 메시지로 변환
         messages = self._convert_to_langchain_messages(

@@ -150,7 +150,7 @@ async def chat(request: ChatRequest):
         history = await store.get_messages(conversation_id)
 
         # AI 응답 생성 (저장 전에 먼저 시도)
-        response = await agent.chat(request.message, history)
+        response = await agent.chat(request.message, history, conversation_id)
 
         # 응답 성공 시에만 사용자 메시지와 AI 응답을 함께 저장
         await store.add_message(conversation_id, "user", request.message)
