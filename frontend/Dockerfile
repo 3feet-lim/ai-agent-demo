@@ -1,28 +1,41 @@
-# Frontend Dockerfile - 폐쇄망 환경 대응
-# nginx로 정적 파일 서빙, 외부 CDN 의존성 없음
+# Frontend Dockerfile - Next.js SSR (standalone 모드)
+# 멀티스테이지 빌드로 이미지 크기 최소화
 
-FROM nginx:1.25-alpine
+# 1단계: 의존성 설치
+FROM node:22-alpine AS deps
+WORKDIR /app
+COPY package.json ./
+RUN npm install --frozen-lockfile || npm install
 
-# 기본 nginx 설정 제거
-RUN rm /etc/nginx/conf.d/default.conf
+# 2단계: 빌드
+FROM node:22-alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+RUN npm run build
 
-# 커스텀 nginx 설정 복사
-COPY nginx.conf /etc/nginx/conf.d/
+# 3단계: 프로덕션 실행
+FROM node:22-alpine AS runner
+WORKDIR /app
 
-# 정적 파일 복사 (모든 CSS/JS가 로컬에 포함되어야 함)
-COPY static/ /usr/share/nginx/html/
+ENV NODE_ENV=production
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
 
-# 비특권 사용자로 실행하기 위한 설정
-RUN chown -R nginx:nginx /usr/share/nginx/html && \
-    chown -R nginx:nginx /var/cache/nginx && \
-    chown -R nginx:nginx /var/log/nginx && \
-    touch /var/run/nginx.pid && \
-    chown -R nginx:nginx /var/run/nginx.pid
+# 보안: 비루트 사용자 생성
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nextjs
 
-EXPOSE 80
+# standalone 출력물 복사
+COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# 헬스체크
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:80/ || exit 1
+USER nextjs
 
-CMD ["nginx", "-g", "daemon off;"]
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:3000/ || exit 1
+
+CMD ["node", "server.js"]
