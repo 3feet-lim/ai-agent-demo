@@ -21,31 +21,18 @@ import nginx from "refractor/lang/nginx";
 
 // @ts-expect-error: registerLanguage 타입 미노출
 Prism.registerLanguage("bash", bash);
-// @ts-expect-error
 Prism.registerLanguage("shell", bash);
-// @ts-expect-error
 Prism.registerLanguage("sh", bash);
-// @ts-expect-error
 Prism.registerLanguage("shell-session", shell);
-// @ts-expect-error
 Prism.registerLanguage("yaml", yaml);
-// @ts-expect-error
 Prism.registerLanguage("yml", yaml);
-// @ts-expect-error
 Prism.registerLanguage("json", json);
-// @ts-expect-error
 Prism.registerLanguage("sql", sql);
-// @ts-expect-error
 Prism.registerLanguage("hcl", hcl);
-// @ts-expect-error
 Prism.registerLanguage("terraform", hcl);
-// @ts-expect-error
 Prism.registerLanguage("docker", docker);
-// @ts-expect-error
 Prism.registerLanguage("dockerfile", docker);
-// @ts-expect-error
 Prism.registerLanguage("ini", ini);
-// @ts-expect-error
 Prism.registerLanguage("nginx", nginx);
 
 interface Message {
