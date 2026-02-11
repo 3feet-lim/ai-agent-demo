@@ -138,7 +138,7 @@ class MCPToolWrapper(BaseTool):
             return raw
 
         stats_header = "\n".join(summary_parts)
-        return f"{stats_header}\n\n{raw}"
+        return f"===STATS===\n{stats_header}\n===END STATS===\n\n{raw}"
 
     async def _arun(self, **kwargs) -> str:
         """비동기 도구 실행"""
@@ -359,11 +359,13 @@ class BedrockAgent:
             "- ALWAYS respond in Korean regardless of the language of tool outputs.",
             "",
             "### Counting and Statistics Rules",
-            "- Tool results include a [통계] header with pre-calculated counts and breakdowns.",
-            "- ALWAYS use the [통계] numbers as the authoritative source. Do NOT count items yourself.",
-            "- When listing items, cross-check your list count against the [통계] total.",
-            "- If you list N items but [통계] says M, trust [통계] and correct your response.",
-            "- Never guess or approximate counts. If unsure, re-query the tool.",
+            "- Tool results include a ===STATS=== section with pre-calculated counts.",
+            "- These counts are computed by code and are 100% accurate. Your own counting WILL be wrong.",
+            "- NEVER count items yourself. ALWAYS copy the number from ===STATS===.",
+            "- When you write '(N개)' in your response, N MUST come from ===STATS===.",
+            "- If you list items in a table, the row count MUST match the ===STATS=== total.",
+            "- If ===STATS=== says 10, you MUST write 10. Not 9, not 11. Exactly 10.",
+            "- Double-check: before finalizing your response, verify every count against ===STATS===.",
             "",
             "### Response Templates",
             "",
