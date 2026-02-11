@@ -57,30 +57,38 @@ body {
 }
 
 .sidebar.collapsed {
-  width: 48px;
-  padding: 16px 4px;
+  width: 0;
+  padding: 0;
+  border-right: none;
+  overflow: visible;
 }
 
-/* 사이드바 하단 토글 버튼 (« / ») */
+/* 사이드바 하단 토글 버튼 */
 .sidebar-toggle-btn {
-  margin-top: auto;
-  width: 100%;
-  padding: 10px 0;
+  position: absolute;
+  top: 50%;
+  right: -14px;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: 50%;
   background-color: var(--bg-primary);
-  color: var(--text-secondary);
-  font-size: 16px;
+  color: var(--text-tertiary);
+  font-size: 14px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background-color 0.2s, color 0.2s;
+  box-shadow: var(--shadow-sm);
+  transition: background-color 0.2s, color 0.2s, box-shadow 0.2s;
+  z-index: 10;
 }
 
 .sidebar-toggle-btn:hover {
   background-color: var(--bg-tertiary);
   color: var(--text-primary);
+  box-shadow: var(--shadow-md);
 }
 
 .sidebar-header {
