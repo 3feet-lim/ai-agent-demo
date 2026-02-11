@@ -355,8 +355,11 @@ class BedrockAgent:
         )
 
         try:
-            # LangGraph 워크플로우 실행
-            result = await self._graph.ainvoke({"messages": messages})
+            # LangGraph 워크플로우 실행 (도구 호출 무한 반복 방지)
+            result = await self._graph.ainvoke(
+                {"messages": messages},
+                {"recursion_limit": 30},
+            )
 
             # 마지막 AI 메시지 추출
             ai_messages = [m for m in result["messages"] if isinstance(m, AIMessage)]

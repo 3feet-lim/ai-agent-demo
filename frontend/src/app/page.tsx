@@ -73,6 +73,10 @@ export default function Home() {
       setIsLoading(true);
 
       try {
+        // 도구 호출이 여러 번 반복될 수 있으므로 타임아웃을 5분으로 설정
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 300_000);
+
         const res = await fetch(`${API_BASE}/chat`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -80,7 +84,10 @@ export default function Home() {
             message: content,
             conversation_id: currentId,
           }),
+          signal: controller.signal,
         });
+
+        clearTimeout(timeoutId);
 
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
@@ -155,12 +162,16 @@ export default function Home() {
 
         loadConversations();
       } catch (err) {
+        const isTimeout =
+          err instanceof DOMException && err.name === "AbortError";
         console.error("메시지 전송 실패:", err);
         setMessages((prev) => [
           ...prev,
           {
             role: "assistant",
-            content: "메시지 전송에 실패했습니다. 다시 시도해주세요.",
+            content: isTimeout
+              ? "응답 시간이 초과되었습니다. 질문을 더 구체적으로 해주시거나 다시 시도해주세요."
+              : "메시지 전송에 실패했습니다. 다시 시도해주세요.",
           },
         ]);
       } finally {
