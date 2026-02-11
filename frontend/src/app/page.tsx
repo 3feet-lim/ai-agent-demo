@@ -54,6 +54,7 @@ export default function Home() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const userIdRef = useRef("");
 
   // 클라이언트 마운트 시 userId 초기화
@@ -236,11 +237,13 @@ export default function Home() {
         currentId={currentId}
         onNewChat={handleNewChat}
         onSelect={handleSelectConversation}
+        isOpen={sidebarOpen}
+        onToggle={() => setSidebarOpen((v) => !v)}
       />
       <main className="chat-container">
         <header className="chat-header">
-          <h1>AI Agent Demo</h1>
-          <span className="model-badge">Claude Sonnet</span>
+          <h1>Olly Agent</h1>
+          <span className="model-badge">Claude Sonnet 4.5</span>
         </header>
         <ErrorBoundary>
           <ChatArea messages={messages} isLoading={isLoading} />

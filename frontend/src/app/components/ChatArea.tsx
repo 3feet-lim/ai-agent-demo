@@ -50,15 +50,15 @@ export default function ChatArea({ messages, isLoading }: ChatAreaProps) {
     <div className="messages-container" ref={containerRef}>
       {messages.length === 0 && !isLoading && (
         <div className="welcome-message">
-          <h2>무엇을 도와드릴까요?</h2>
-          <p>질문을 입력하시면 AI가 답변해 드립니다.</p>
+          <h2>안녕하세요, Olly입니다!</h2>
+          <p>무엇을 도와드릴까요? 질문을 입력해 주세요.</p>
         </div>
       )}
 
       {messages.map((msg, idx) => (
         <div key={idx} className={`message ${msg.role}`}>
           <div className="message-avatar">
-            {msg.role === "user" ? "U" : "AI"}
+            {msg.role === "user" ? "U" : "Olly"}
           </div>
           <div className="message-content">
             <Markdown
@@ -98,7 +98,7 @@ export default function ChatArea({ messages, isLoading }: ChatAreaProps) {
 
       {isLoading && (
         <div className="message assistant">
-          <div className="message-avatar">AI</div>
+          <div className="message-avatar">Olly</div>
           <div className="message-content">
             <div className="typing-indicator">
               <span />

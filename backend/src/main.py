@@ -38,7 +38,7 @@ async def _init_mcp_background():
 async def lifespan(app: FastAPI):
     """애플리케이션 라이프사이클 관리"""
     # 시작 시 초기화
-    logger.info("Starting AI Agent Demo...")
+    logger.info("Starting Olly Agent...")
     await get_conversation_store()
     
     # MCP 연결을 백그라운드 태스크로 실행
@@ -49,7 +49,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"AWS Region: {settings.aws_region}")
     yield
     # 종료 시 정리
-    logger.info("Shutting down AI Agent Demo...")
+    logger.info("Shutting down Olly Agent...")
     # 아직 MCP 초기화 중이면 완료 대기
     if not mcp_task.done():
         mcp_task.cancel()
@@ -65,8 +65,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="AI Agent Demo",
-    description="LangChain + LangGraph + AWS Bedrock 기반 AI 에이전트",
+    title="Olly Agent",
+    description="LangChain + LangGraph + AWS Bedrock 기반 Observability AI 에이전트",
     version="1.0.0",
     lifespan=lifespan
 )

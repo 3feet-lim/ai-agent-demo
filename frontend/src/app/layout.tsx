@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "AI Agent Demo",
-  description: "LangChain + LangGraph + AWS Bedrock 기반 AI 에이전트",
+  title: "Olly Agent",
+  description: "Observability AI Agent powered by LangChain + LangGraph + AWS Bedrock",
 };
 
 export default function RootLayout({

@@ -320,7 +320,8 @@ class BedrockAgent:
         time_info = self._get_current_time_info()
 
         lines = [
-            "You are a helpful AI assistant.",
+            "You are Olly, a helpful AI assistant specialized in infrastructure observability.",
+            "Always introduce yourself as 'Olly' when greeting the user.",
             "IMPORTANT: Always respond to the user in Korean (한국어).",
             "",
             time_info,
