@@ -9,14 +9,32 @@ import ErrorBoundary from "./components/ErrorBoundary";
 const API_BASE = "/api";
 
 // localStorage 기반 익명 사용자 ID 생성/조회
+function generateUUID(): string {
+  // crypto.randomUUID()는 HTTPS 또는 localhost에서만 지원
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  // HTTP 환경 폴백
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 function getUserId(): string {
   if (typeof window === "undefined") return "";
-  let userId = localStorage.getItem("ai-agent-user-id");
-  if (!userId) {
-    userId = crypto.randomUUID();
-    localStorage.setItem("ai-agent-user-id", userId);
+  try {
+    let userId = localStorage.getItem("ai-agent-user-id");
+    if (!userId) {
+      userId = generateUUID();
+      localStorage.setItem("ai-agent-user-id", userId);
+    }
+    return userId;
+  } catch {
+    // localStorage 접근 불가 시 세션 단위 ID
+    return generateUUID();
   }
-  return userId;
 }
 
 interface Message {
