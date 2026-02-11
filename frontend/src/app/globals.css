@@ -51,51 +51,26 @@ body {
   display: flex;
   flex-direction: column;
   padding: 16px;
-  transition: transform 0.25s ease, opacity 0.25s ease;
+  transition: width 0.25s ease;
+  overflow: hidden;
+  position: relative;
 }
 
 .sidebar.collapsed {
-  transform: translateX(-100%);
-  position: absolute;
-  opacity: 0;
-  pointer-events: none;
+  width: 48px;
+  padding: 16px 4px;
 }
 
-/* 사이드바 열기 버튼 (접힌 상태에서 표시) */
-.sidebar-open-btn {
-  position: fixed;
-  top: 12px;
-  left: 12px;
-  z-index: 100;
-  width: 36px;
-  height: 36px;
+/* 사이드바 하단 토글 버튼 (« / ») */
+.sidebar-toggle-btn {
+  margin-top: auto;
+  width: 100%;
+  padding: 10px 0;
   border: 1px solid var(--border-color);
   border-radius: 8px;
-  background-color: var(--bg-secondary);
-  color: var(--text-primary);
-  font-size: 18px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: var(--shadow-sm);
-  transition: background-color 0.2s;
-}
-
-.sidebar-open-btn:hover {
-  background-color: var(--bg-tertiary);
-}
-
-/* 사이드바 닫기 버튼 */
-.sidebar-close-btn {
-  margin-left: auto;
-  width: 28px;
-  height: 28px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-tertiary);
-  font-size: 14px;
+  background-color: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 16px;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -103,7 +78,7 @@ body {
   transition: background-color 0.2s, color 0.2s;
 }
 
-.sidebar-close-btn:hover {
+.sidebar-toggle-btn:hover {
   background-color: var(--bg-tertiary);
   color: var(--text-primary);
 }
@@ -191,6 +166,11 @@ body {
   padding: 14px 24px;
   border-bottom: 1px solid var(--border-color);
   background-color: var(--bg-primary);
+  transition: padding-left 0.25s ease;
+}
+
+.chat-header.sidebar-collapsed {
+  padding-left: 24px;
 }
 
 .chat-header h1 {

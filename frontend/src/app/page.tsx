@@ -241,7 +241,7 @@ export default function Home() {
         onToggle={() => setSidebarOpen((v) => !v)}
       />
       <main className="chat-container">
-        <header className="chat-header">
+        <header className={`chat-header${sidebarOpen ? "" : " sidebar-collapsed"}`}>
           <h1>Olly Agent</h1>
           <span className="model-badge">Claude Sonnet 4.5</span>
         </header>
