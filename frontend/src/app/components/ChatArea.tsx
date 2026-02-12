@@ -176,7 +176,7 @@ export default function ChatArea({ messages, isLoading }: ChatAreaProps) {
                 },
               }}
             >
-              {msg.content}
+              {msg.content.replace(/([^\n])(#{1,6}\s)/g, "$1\n\n$2")}
             </Markdown>
           </div>
         </div>

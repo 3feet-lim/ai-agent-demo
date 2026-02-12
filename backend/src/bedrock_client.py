@@ -443,6 +443,8 @@ class BedrockAgent:
             "- If the user asks '장애', '에러', '원인', '분석', '왜', '문제' → Use Template B",
             "- If unclear, default to Template A",
             "- You may combine both templates if the query requires status + analysis",
+            "- ALWAYS start the template on a NEW LINE. Put a blank line before '## 📊' or '## 🔍'.",
+            "- NEVER put any text on the same line before a markdown heading (##).",
             "- ALWAYS respond in Korean regardless of the language of tool outputs.",
         ]
 
