@@ -576,6 +576,70 @@ class BedrockAgent:
 
         return messages
 
+    async def chat_stream(
+        self,
+        message: str,
+        history: Optional[list[dict]] = None,
+        conversation_id: Optional[str] = None,
+    ):
+        """
+        스트리밍 대화 처리 (토큰 단위 AsyncGenerator)
+
+        Yields:
+            str: 토큰 문자열 (빈 문자열이면 무시)
+        """
+        await self._ensure_initialized()
+
+        history = history or []
+
+        context: MCPContext = await self._mcp_manager.get_context()
+        system_prompt = self._build_system_prompt(context)
+
+        current_history = history + [{"role": "user", "content": message}]
+
+        if conversation_id and len(current_history) > self.WINDOW_SIZE:
+            current_history = await self._build_hybrid_history(
+                conversation_id, current_history
+            )
+
+        messages = self._convert_to_langchain_messages(
+            current_history,
+            system_prompt
+        )
+
+        try:
+            # astream_events v2로 토큰 단위 스트리밍
+            async for event in self._graph.astream_events(
+                {"messages": messages},
+                config={"recursion_limit": 30},
+                version="v2",
+            ):
+                kind = event.get("event")
+                # LLM에서 나오는 토큰 청크만 추출
+                if kind == "on_chat_model_stream":
+                    chunk = event.get("data", {}).get("chunk")
+                    if chunk and hasattr(chunk, "content"):
+                        content = chunk.content
+                        if isinstance(content, str) and content:
+                            yield content
+                        elif isinstance(content, list):
+                            for block in content:
+                                if isinstance(block, dict) and block.get("type") == "text":
+                                    text = block.get("text", "")
+                                    if text:
+                                        yield text
+
+        except GraphRecursionError:
+            logger.warning("도구 호출 횟수 제한(recursion_limit=30)에 도달했습니다.")
+            yield (
+                "죄송합니다. 요청을 처리하는 과정에서 도구 호출 횟수 제한에 도달했습니다. "
+                "질문의 범위를 좁히거나, 더 구체적으로 질문해 주시면 더 나은 결과를 드릴 수 있습니다."
+            )
+
+        except Exception as e:
+            logger.error(f"Error during chat_stream: {e}")
+            raise
+
     async def chat(
         self,
         message: str,

@@ -3,12 +3,14 @@ AI Agent Demo - FastAPI 백엔드
 LangChain + LangGraph + Bedrock 기반
 """
 import asyncio
+import json
 import logging
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from .config import get_settings
@@ -134,9 +136,9 @@ async def get_status():
     }
 
 
-@app.post("/api/chat", response_model=ChatResponse)
+@app.post("/api/chat")
 async def chat(request: ChatRequest, x_user_id: Optional[str] = Header(None)):
-    """채팅 메시지 처리"""
+    """채팅 메시지 처리 (SSE 스트리밍)"""
     try:
         store = await get_conversation_store()
         agent = await get_bedrock_agent()
@@ -149,16 +151,40 @@ async def chat(request: ChatRequest, x_user_id: Optional[str] = Header(None)):
         # 기존 메시지 히스토리 로드
         history = await store.get_messages(conversation_id)
 
-        # AI 응답 생성 (저장 전에 먼저 시도)
-        response = await agent.chat(request.message, history, conversation_id)
+        async def event_generator():
+            """SSE 이벤트 생성기"""
+            full_response = []
 
-        # 응답 성공 시에만 사용자 메시지와 AI 응답을 함께 저장
-        await store.add_message(conversation_id, "user", request.message)
-        await store.add_message(conversation_id, "assistant", response)
+            # conversation_id 먼저 전송
+            yield f"data: {json.dumps({'conversation_id': conversation_id})}\n\n"
 
-        return ChatResponse(
-            response=response,
-            conversation_id=conversation_id
+            try:
+                async for token in agent.chat_stream(
+                    request.message, history, conversation_id
+                ):
+                    full_response.append(token)
+                    yield f"data: {json.dumps({'token': token})}\n\n"
+
+                # 스트리밍 완료 후 메시지 저장
+                response_text = "".join(full_response)
+                if response_text:
+                    await store.add_message(conversation_id, "user", request.message)
+                    await store.add_message(conversation_id, "assistant", response_text)
+
+            except Exception as e:
+                logger.error(f"Streaming error: {e}")
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
         )
 
     except Exception as e:

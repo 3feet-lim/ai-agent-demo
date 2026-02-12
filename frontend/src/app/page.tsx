@@ -177,6 +177,20 @@ export default function Home() {
                   setCurrentId(convId);
                 }
 
+                if (parsed.error) {
+                  setMessages((prev) => {
+                    const updated = [...prev];
+                    const last = updated[updated.length - 1];
+                    if (last?.role === "assistant") {
+                      updated[updated.length - 1] = {
+                        ...last,
+                        content: "오류가 발생했습니다: " + parsed.error,
+                      };
+                    }
+                    return updated;
+                  });
+                }
+
                 if (parsed.token) {
                   setMessages((prev) => {
                     const updated = [...prev];
