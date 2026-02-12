@@ -54,8 +54,15 @@ export default function Home() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const userIdRef = useRef("");
+  const currentIdRef = useRef<string | null>(null);
+
+  // currentId 변경 시 ref도 동기화
+  useEffect(() => {
+    currentIdRef.current = currentId;
+  }, [currentId]);
 
   // 클라이언트 마운트 시 userId 초기화
   useEffect(() => {
@@ -118,7 +125,7 @@ export default function Home() {
     setMessages([]);
   }, []);
 
-  // 메시지 전송 (SSE 스트리밍 지원, JSON 폴백)
+  // 메시지 전송 (SSE 스트리밍)
   const handleSend = useCallback(
     async (content: string) => {
       setMessages((prev) => [...prev, { role: "user", content }]);
@@ -133,7 +140,7 @@ export default function Home() {
           headers: getHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({
             message: content,
-            conversation_id: currentId,
+            conversation_id: currentIdRef.current,
           }),
           signal: controller.signal,
         });
@@ -146,15 +153,17 @@ export default function Home() {
 
         // SSE 스트리밍 응답 처리
         if (contentType.includes("text/event-stream") && res.body) {
+          // 빈 assistant 메시지 추가 후 스트리밍 시작
           setMessages((prev) => [
             ...prev,
             { role: "assistant", content: "" },
           ]);
+          setIsLoading(false);
+          setIsStreaming(true);
 
           const reader = res.body.getReader();
           const decoder = new TextDecoder();
           let buffer = "";
-          let convId = currentId;
 
           while (true) {
             const { done, value } = await reader.read();
@@ -172,9 +181,8 @@ export default function Home() {
               try {
                 const parsed = JSON.parse(data);
 
-                if (parsed.conversation_id && !convId) {
-                  convId = parsed.conversation_id;
-                  setCurrentId(convId);
+                if (parsed.conversation_id) {
+                  setCurrentId(parsed.conversation_id);
                 }
 
                 if (parsed.error) {
@@ -209,8 +217,10 @@ export default function Home() {
               }
             }
           }
+
+          setIsStreaming(false);
         } else {
-          // 일반 JSON 응답 (현재 backend 호환)
+          // JSON 폴백
           const data = await res.json();
 
           if (data.conversation_id) {
@@ -239,9 +249,10 @@ export default function Home() {
         ]);
       } finally {
         setIsLoading(false);
+        setIsStreaming(false);
       }
     },
-    [currentId, loadConversations, getHeaders]
+    [loadConversations, getHeaders]
   );
 
   return (
@@ -262,7 +273,7 @@ export default function Home() {
         <ErrorBoundary>
           <ChatArea messages={messages} isLoading={isLoading} />
         </ErrorBoundary>
-        <MessageInput onSend={handleSend} disabled={isLoading} />
+        <MessageInput onSend={handleSend} disabled={isLoading || isStreaming} />
       </main>
     </div>
   );
