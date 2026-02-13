@@ -40,6 +40,7 @@ function getUserId(): string {
 interface Message {
   role: string;
   content: string;
+  images?: string[];
   toolTrace?: string[];
   activeTools?: string[];
 }
@@ -130,7 +131,7 @@ export default function Home() {
   // 메시지 전송 (SSE 스트리밍)
   const handleSend = useCallback(
     async (content: string, images?: string[]) => {
-      setMessages((prev) => [...prev, { role: "user", content }]);
+      setMessages((prev) => [...prev, { role: "user", content, images }]);
       setIsLoading(true);
 
       try {

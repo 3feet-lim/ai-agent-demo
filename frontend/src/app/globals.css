@@ -686,6 +686,28 @@ body {
   background-color: rgba(0, 0, 0, 0.7);
 }
 
+/* 채팅 메시지 내 이미지 */
+.message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.message-image {
+  max-width: 300px;
+  max-height: 200px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  object-fit: contain;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.message-image:hover {
+  opacity: 0.85;
+}
+
 /* 에러 메시지 */
 .error-message {
   background-color: var(--error-bg);

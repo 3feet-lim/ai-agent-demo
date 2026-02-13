@@ -39,6 +39,7 @@ SyntaxHighlighter.registerLanguage("typescript", typescript);
 interface Message {
   role: string;
   content: string;
+  images?: string[];
   toolTrace?: string[];
   activeTools?: string[];
 }
@@ -127,6 +128,19 @@ export default function ChatArea({ messages, isLoading }: ChatAreaProps) {
             {msg.role === "user" ? "U" : "Olly"}
           </div>
           <div className="message-content">
+            {/* 첨부 이미지 표시 */}
+            {msg.images && msg.images.length > 0 && (
+              <div className="message-images">
+                {msg.images.map((src, i) => (
+                  <img
+                    key={i}
+                    src={src}
+                    alt={`첨부 이미지 ${i + 1}`}
+                    className="message-image"
+                  />
+                ))}
+              </div>
+            )}
             {/* 도구 실행 중 표시 */}
             {msg.role === "assistant" && msg.activeTools && msg.activeTools.length > 0 && (
               <div className="tool-activity">
