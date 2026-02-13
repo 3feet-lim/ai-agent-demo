@@ -50,6 +50,32 @@ export default function MessageInput({ onSend, disabled }: MessageInputProps) {
     [doSend]
   );
 
+  // 클립보드 붙여넣기 (Ctrl+V 스크린샷)
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      for (const item of Array.from(items)) {
+        if (!item.type.startsWith("image/")) continue;
+
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (!file) continue;
+
+        const reader = new FileReader();
+        reader.onload = () => {
+          setImages((prev) => [
+            ...prev,
+            { file, dataUrl: reader.result as string },
+          ]);
+        };
+        reader.readAsDataURL(file);
+      }
+    },
+    []
+  );
+
   // 파일 선택 처리
   const handleFileSelect = useCallback(
     (e: ChangeEvent<HTMLInputElement>) => {
@@ -132,6 +158,7 @@ export default function MessageInput({ onSend, disabled }: MessageInputProps) {
           autoFocus
           onChange={handleChange}
           onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
         />
         <button
           className="send-btn"
