@@ -452,6 +452,61 @@ body {
   text-decoration: underline;
 }
 
+/* 도구 실행 중 표시 */
+.tool-activity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background-color: var(--bg-tertiary);
+  border-radius: 6px;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.tool-activity-icon {
+  animation: spin 2s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+/* 도구 호출 이력 */
+.tool-trace {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-color);
+}
+
+.tool-trace details summary {
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.tool-trace details summary:hover {
+  color: var(--text-primary);
+}
+
+.tool-trace-list {
+  margin: 6px 0 0 0;
+  padding-left: 22px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.8;
+  font-family: "SF Mono", "Consolas", "Monaco", monospace;
+}
+
 /* 로딩 인디케이터 */
 .typing-indicator {
   display: flex;

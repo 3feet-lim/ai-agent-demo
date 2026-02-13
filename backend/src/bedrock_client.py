@@ -585,10 +585,12 @@ class BedrockAgent:
         conversation_id: Optional[str] = None,
     ):
         """
-        스트리밍 대화 처리 (토큰 단위 AsyncGenerator)
+        스트리밍 대화 처리 (토큰/도구 호출 정보 AsyncGenerator)
 
         Yields:
-            str: 토큰 문자열 (빈 문자열이면 무시)
+            dict: {"type": "token", "content": "..."} 또는
+                  {"type": "tool_start", "name": "...", "args": {...}} 또는
+                  {"type": "tool_end", "name": "..."}
         """
         await self._ensure_initialized()
 
@@ -610,33 +612,54 @@ class BedrockAgent:
         )
 
         try:
-            # astream_events v2로 토큰 단위 스트리밍
             async for event in self._graph.astream_events(
                 {"messages": messages},
                 config={"recursion_limit": 30},
                 version="v2",
             ):
                 kind = event.get("event")
-                # LLM에서 나오는 토큰 청크만 추출
-                if kind == "on_chat_model_stream":
+
+                # 도구 호출 시작
+                if kind == "on_tool_start":
+                    tool_name = event.get("name", "unknown")
+                    tool_input = event.get("data", {}).get("input", {})
+                    yield {
+                        "type": "tool_start",
+                        "name": tool_name,
+                        "args": tool_input,
+                    }
+
+                # 도구 호출 완료
+                elif kind == "on_tool_end":
+                    tool_name = event.get("name", "unknown")
+                    yield {
+                        "type": "tool_end",
+                        "name": tool_name,
+                    }
+
+                # LLM 토큰 스트리밍
+                elif kind == "on_chat_model_stream":
                     chunk = event.get("data", {}).get("chunk")
                     if chunk and hasattr(chunk, "content"):
                         content = chunk.content
                         if isinstance(content, str) and content:
-                            yield content
+                            yield {"type": "token", "content": content}
                         elif isinstance(content, list):
                             for block in content:
                                 if isinstance(block, dict) and block.get("type") == "text":
                                     text = block.get("text", "")
                                     if text:
-                                        yield text
+                                        yield {"type": "token", "content": text}
 
         except GraphRecursionError:
             logger.warning("도구 호출 횟수 제한(recursion_limit=30)에 도달했습니다.")
-            yield (
-                "죄송합니다. 요청을 처리하는 과정에서 도구 호출 횟수 제한에 도달했습니다. "
-                "질문의 범위를 좁히거나, 더 구체적으로 질문해 주시면 더 나은 결과를 드릴 수 있습니다."
-            )
+            yield {
+                "type": "token",
+                "content": (
+                    "죄송합니다. 요청을 처리하는 과정에서 도구 호출 횟수 제한에 도달했습니다. "
+                    "질문의 범위를 좁히거나, 더 구체적으로 질문해 주시면 더 나은 결과를 드릴 수 있습니다."
+                ),
+            }
 
         except Exception as e:
             logger.error(f"Error during chat_stream: {e}")

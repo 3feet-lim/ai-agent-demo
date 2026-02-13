@@ -40,6 +40,8 @@ function getUserId(): string {
 interface Message {
   role: string;
   content: string;
+  toolTrace?: string[];
+  activeTools?: string[];
 }
 
 interface Conversation {
@@ -193,6 +195,50 @@ export default function Home() {
                       updated[updated.length - 1] = {
                         ...last,
                         content: "오류가 발생했습니다: " + parsed.error,
+                      };
+                    }
+                    return updated;
+                  });
+                }
+
+                // 도구 호출 시작: 실행 중인 도구 표시
+                if (parsed.tool_start) {
+                  setMessages((prev) => {
+                    const updated = [...prev];
+                    const last = updated[updated.length - 1];
+                    if (last?.role === "assistant") {
+                      const active = [...(last.activeTools || []), parsed.tool_start];
+                      updated[updated.length - 1] = { ...last, activeTools: active };
+                    }
+                    return updated;
+                  });
+                }
+
+                // 도구 호출 완료: 실행 중 목록에서 제거
+                if (parsed.tool_end) {
+                  setMessages((prev) => {
+                    const updated = [...prev];
+                    const last = updated[updated.length - 1];
+                    if (last?.role === "assistant") {
+                      const active = (last.activeTools || []).filter(
+                        (t: string) => t !== parsed.tool_end
+                      );
+                      updated[updated.length - 1] = { ...last, activeTools: active };
+                    }
+                    return updated;
+                  });
+                }
+
+                // 도구 호출 이력 (최종)
+                if (parsed.tool_trace) {
+                  setMessages((prev) => {
+                    const updated = [...prev];
+                    const last = updated[updated.length - 1];
+                    if (last?.role === "assistant") {
+                      updated[updated.length - 1] = {
+                        ...last,
+                        toolTrace: parsed.tool_trace,
+                        activeTools: [],
                       };
                     }
                     return updated;

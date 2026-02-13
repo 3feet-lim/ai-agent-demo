@@ -39,6 +39,8 @@ SyntaxHighlighter.registerLanguage("typescript", typescript);
 interface Message {
   role: string;
   content: string;
+  toolTrace?: string[];
+  activeTools?: string[];
 }
 
 interface ChatAreaProps {
@@ -125,6 +127,13 @@ export default function ChatArea({ messages, isLoading }: ChatAreaProps) {
             {msg.role === "user" ? "U" : "Olly"}
           </div>
           <div className="message-content">
+            {/* 도구 실행 중 표시 */}
+            {msg.role === "assistant" && msg.activeTools && msg.activeTools.length > 0 && (
+              <div className="tool-activity">
+                <span className="tool-activity-icon">⚙️</span>
+                <span>{msg.activeTools[msg.activeTools.length - 1]} 실행 중...</span>
+              </div>
+            )}
             <Markdown
               remarkPlugins={[remarkGfm]}
               rehypePlugins={[rehypeRaw]}
@@ -178,6 +187,19 @@ export default function ChatArea({ messages, isLoading }: ChatAreaProps) {
             >
               {msg.content.replace(/([^\n])(#{1,6}\s)/g, "$1\n\n$2")}
             </Markdown>
+            {/* 도구 호출 이력 표시 */}
+            {msg.role === "assistant" && msg.toolTrace && msg.toolTrace.length > 0 && (
+              <div className="tool-trace">
+                <details>
+                  <summary>🔧 사용된 도구 ({msg.toolTrace.length}개)</summary>
+                  <ol className="tool-trace-list">
+                    {msg.toolTrace.map((tool, i) => (
+                      <li key={i}>{tool}</li>
+                    ))}
+                  </ol>
+                </details>
+              </div>
+            )}
           </div>
         </div>
       ))}

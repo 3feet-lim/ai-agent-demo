@@ -154,16 +154,32 @@ async def chat(request: ChatRequest, x_user_id: Optional[str] = Header(None)):
         async def event_generator():
             """SSE 이벤트 생성기"""
             full_response = []
+            tool_trace = []  # 도구 호출 순서 기록
 
             # conversation_id 먼저 전송
             yield f"data: {json.dumps({'conversation_id': conversation_id})}\n\n"
 
             try:
-                async for token in agent.chat_stream(
+                async for event in agent.chat_stream(
                     request.message, history, conversation_id
                 ):
-                    full_response.append(token)
-                    yield f"data: {json.dumps({'token': token})}\n\n"
+                    event_type = event.get("type")
+
+                    if event_type == "tool_start":
+                        tool_trace.append(event["name"])
+                        yield f"data: {json.dumps({'tool_start': event['name']})}\n\n"
+
+                    elif event_type == "tool_end":
+                        yield f"data: {json.dumps({'tool_end': event['name']})}\n\n"
+
+                    elif event_type == "token":
+                        token = event["content"]
+                        full_response.append(token)
+                        yield f"data: {json.dumps({'token': token})}\n\n"
+
+                # 도구 호출 이력을 마지막에 전송
+                if tool_trace:
+                    yield f"data: {json.dumps({'tool_trace': tool_trace})}\n\n"
 
                 # 스트리밍 완료 후 메시지 저장
                 response_text = "".join(full_response)
