@@ -632,9 +632,23 @@ class BedrockAgent:
                 # 도구 호출 완료
                 elif kind == "on_tool_end":
                     tool_name = event.get("name", "unknown")
+                    output = event.get("data", {}).get("output", "")
+                    # 결과를 문자열로 변환
+                    if hasattr(output, "content"):
+                        result_str = str(output.content)
+                    else:
+                        result_str = str(output) if output else ""
+                    # 에러/빈 결과 판별
+                    is_error = (
+                        not result_str
+                        or "error" in result_str.lower()[:100]
+                        or "not found" in result_str.lower()[:100]
+                        or len(result_str.strip()) < 5
+                    )
                     yield {
                         "type": "tool_end",
                         "name": tool_name,
+                        "success": not is_error,
                     }
 
                 # LLM 토큰 스트리밍

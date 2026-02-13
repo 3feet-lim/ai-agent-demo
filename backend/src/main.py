@@ -166,20 +166,28 @@ async def chat(request: ChatRequest, x_user_id: Optional[str] = Header(None)):
                     event_type = event.get("type")
 
                     if event_type == "tool_start":
-                        tool_trace.append(event["name"])
                         yield f"data: {json.dumps({'tool_start': event['name']})}\n\n"
 
                     elif event_type == "tool_end":
                         yield f"data: {json.dumps({'tool_end': event['name']})}\n\n"
+                        # 성공한 도구만 trace에 기록
+                        if event.get("success", True):
+                            tool_trace.append(event["name"])
 
                     elif event_type == "token":
                         token = event["content"]
                         full_response.append(token)
                         yield f"data: {json.dumps({'token': token})}\n\n"
 
-                # 도구 호출 이력을 마지막에 전송
+                # 도구 호출 이력을 마지막에 전송 (중복 제거, 순서 유지)
                 if tool_trace:
-                    yield f"data: {json.dumps({'tool_trace': tool_trace})}\n\n"
+                    seen = set()
+                    unique_trace = []
+                    for t in tool_trace:
+                        if t not in seen:
+                            seen.add(t)
+                            unique_trace.append(t)
+                    yield f"data: {json.dumps({'tool_trace': unique_trace})}\n\n"
 
                 # 스트리밍 완료 후 메시지 저장
                 response_text = "".join(full_response)
