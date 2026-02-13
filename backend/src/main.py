@@ -87,6 +87,7 @@ app.add_middleware(
 class ChatRequest(BaseModel):
     message: str
     conversation_id: Optional[str] = None
+    images: Optional[list[str]] = None  # base64 인코딩된 이미지 리스트
 
 
 class ChatResponse(BaseModel):
@@ -161,7 +162,8 @@ async def chat(request: ChatRequest, x_user_id: Optional[str] = Header(None)):
 
             try:
                 async for event in agent.chat_stream(
-                    request.message, history, conversation_id
+                    request.message, history, conversation_id,
+                    images=request.images,
                 ):
                     event_type = event.get("type")
 

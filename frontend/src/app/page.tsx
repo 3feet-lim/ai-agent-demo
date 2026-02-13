@@ -129,7 +129,7 @@ export default function Home() {
 
   // 메시지 전송 (SSE 스트리밍)
   const handleSend = useCallback(
-    async (content: string) => {
+    async (content: string, images?: string[]) => {
       setMessages((prev) => [...prev, { role: "user", content }]);
       setIsLoading(true);
 
@@ -143,6 +143,7 @@ export default function Home() {
           body: JSON.stringify({
             message: content,
             conversation_id: currentIdRef.current,
+            images: images || null,
           }),
           signal: controller.signal,
         });

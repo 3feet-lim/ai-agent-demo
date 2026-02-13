@@ -554,9 +554,10 @@ class BedrockAgent:
     def _convert_to_langchain_messages(
         self,
         history: list[dict],
-        system_prompt: str
+        system_prompt: str,
+        images: Optional[list[str]] = None,
     ) -> list:
-        """대화 히스토리를 LangChain 메시지 형식으로 변환"""
+        """대화 히스토리를 LangChain 메시지 형식으로 변환 (이미지 지원)"""
         messages = []
 
         # 시스템 프롬프트 추가
@@ -564,16 +565,41 @@ class BedrockAgent:
             messages.append(SystemMessage(content=system_prompt))
 
         # 대화 히스토리 변환
-        for msg in history:
+        for i, msg in enumerate(history):
             role = msg.get("role", "user")
             content = msg.get("content", "")
 
             if role == "user":
-                messages.append(HumanMessage(content=content))
+                # 마지막 user 메시지에 이미지 첨부
+                is_last_user = (i == len(history) - 1) and images
+                if is_last_user:
+                    # 멀티모달 content 구성
+                    content_blocks = []
+                    for img_data in images:
+                        # base64 데이터에서 미디어 타입 추출
+                        if img_data.startswith("data:"):
+                            # "data:image/png;base64,..." 형식
+                            header, b64 = img_data.split(",", 1)
+                            media_type = header.split(":")[1].split(";")[0]
+                        else:
+                            b64 = img_data
+                            media_type = "image/png"
+                        content_blocks.append({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{media_type};base64,{b64}",
+                            },
+                        })
+                    content_blocks.append({
+                        "type": "text",
+                        "text": content,
+                    })
+                    messages.append(HumanMessage(content=content_blocks))
+                else:
+                    messages.append(HumanMessage(content=content))
             elif role == "assistant":
                 messages.append(AIMessage(content=content))
             elif role == "system":
-                # 하이브리드 메모리의 요약 메시지
                 messages.append(SystemMessage(content=content))
 
         return messages
@@ -583,6 +609,7 @@ class BedrockAgent:
         message: str,
         history: Optional[list[dict]] = None,
         conversation_id: Optional[str] = None,
+        images: Optional[list[str]] = None,
     ):
         """
         스트리밍 대화 처리 (토큰/도구 호출 정보 AsyncGenerator)
@@ -590,7 +617,7 @@ class BedrockAgent:
         Yields:
             dict: {"type": "token", "content": "..."} 또는
                   {"type": "tool_start", "name": "...", "args": {...}} 또는
-                  {"type": "tool_end", "name": "..."}
+                  {"type": "tool_end", "name": "...", "success": bool}
         """
         await self._ensure_initialized()
 
@@ -608,7 +635,8 @@ class BedrockAgent:
 
         messages = self._convert_to_langchain_messages(
             current_history,
-            system_prompt
+            system_prompt,
+            images=images,
         )
 
         try:
