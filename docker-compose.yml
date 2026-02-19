@@ -29,7 +29,7 @@ services:
       - .env
     environment:
       # Streamable HTTP 모드로 실행 (.env의 CLOUDWATCH_MCP_TRANSPORT로 제어)
-      - CLOUDWATCH_MCP_TRANSPORT=${CLOUDWATCH_MCP_TRANSPORT:-streamable-http}
+      - CLOUDWATCH_MCP_TRANSPORT=streamable-http
       - CLOUDWATCH_MCP_HOST=cloudwatch-mcp
       - CLOUDWATCH_MCP_PORT=8000
       - AUTH_TYPE=no-auth
