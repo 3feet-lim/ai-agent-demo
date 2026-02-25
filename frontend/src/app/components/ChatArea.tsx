@@ -103,6 +103,56 @@ function detectLanguage(code: string): string {
   return "bash";
 }
 
+/**
+ * 마크다운 전처리: 깨진 테이블/헤딩 보정
+ * - 헤딩(##) 앞에 개행이 없으면 추가
+ * - 테이블 행이 한 줄로 이어진 경우 줄바꿈 삽입
+ *   예: "| a | b || c | d |" → "| a | b |\n| c | d |"
+ */
+function preprocessMarkdown(content: string): string {
+  let result = content;
+
+  // 헤딩 앞에 개행 보정
+  result = result.replace(/([^\n])(#{1,6}\s)/g, "$1\n\n$2");
+
+  // 테이블 행이 || 로 이어진 경우 줄바꿈 삽입
+  // "| ... || ..." 패턴을 "| ...\n| ..." 로 변환
+  result = result.replace(/\|\s*\|\s*(?=\d+\s*\||\w)/g, "|\n| ");
+
+  // 테이블 구분선이 없는 경우 보정: 헤더 행 다음에 구분선 삽입
+  // 이미 구분선이 있으면 건드리지 않음
+  const lines = result.split("\n");
+  const processed: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    processed.push(lines[i]);
+    // 현재 줄이 테이블 행이고, 다음 줄도 테이블 행인데 구분선(---)이 아닌 경우
+    if (
+      i === 0 ||
+      !lines[i].trim().startsWith("|") ||
+      !lines[i].trim().endsWith("|")
+    ) continue;
+
+    const nextLine = lines[i + 1]?.trim() || "";
+    const prevLine = lines[i - 1]?.trim() || "";
+
+    // 이전 줄이 테이블이 아니고, 다음 줄이 테이블인데 구분선이 아닌 경우 → 구분선 삽입
+    if (
+      !prevLine.startsWith("|") &&
+      nextLine.startsWith("|") &&
+      !nextLine.includes("---")
+    ) {
+      // 컬럼 수에 맞게 구분선 생성
+      const cols = lines[i].split("|").length - 2;
+      if (cols > 0) {
+        const separator = "|" + " --- |".repeat(cols);
+        processed.push(separator);
+      }
+    }
+  }
+
+  return processed.join("\n");
+}
+
 export default function ChatArea({ messages, isLoading }: ChatAreaProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -199,7 +249,7 @@ export default function ChatArea({ messages, isLoading }: ChatAreaProps) {
                 },
               }}
             >
-              {msg.content.replace(/([^\n])(#{1,6}\s)/g, "$1\n\n$2")}
+              {preprocessMarkdown(msg.content)}
             </Markdown>
             {/* 도구 호출 이력 표시 */}
             {msg.role === "assistant" && msg.toolTrace && msg.toolTrace.length > 0 && (
