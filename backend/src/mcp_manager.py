@@ -216,18 +216,18 @@ class MCPManager:
         return bool(settings.grafana_url) or bool(settings.aws_region)
 
     def _setup_servers(self):
-        """설정에 따라 MCP 서버 구성 (SSE/HTTP 기반)"""
+        """설정에 따라 MCP 서버 구성 (Streamable HTTP 기반)"""
         settings = get_settings()
 
         # 디버깅: 설정 값 로그
         logger.info(f"Grafana URL from settings: {settings.grafana_url}")
         logger.info(f"Grafana Service Account Token exists: {bool(settings.grafana_service_account_token)}")
-        logger.info(f"CloudWatch MCP Transport: {settings.cloudwatch_mcp_transport}")
         logger.info(f"AWS Region: {settings.aws_region}")
 
-        # Grafana MCP 서버 설정 (Docker 컨테이너로 실행 중)
-        # Grafana MCP는 Streamable HTTP 모드로 실행 (-t streamable-http)
-        # /mcp 엔드포인트 사용
+        # 모든 MCP 서버는 Streamable HTTP 모드(/mcp 엔드포인트)로 통일
+        # 연결 실패 시 해당 서버만 건너뛰고 나머지는 정상 동작
+
+        # Grafana MCP 서버
         if settings.grafana_url and settings.grafana_service_account_token:
             grafana_mcp_url = settings.grafana_mcp_url or "http://grafana-mcp:8000/mcp"
             self._servers["grafana"] = MCPServerConnection(
@@ -236,20 +236,16 @@ class MCPManager:
             )
             logger.info(f"Grafana MCP server configured at {grafana_mcp_url}")
 
-        # CloudWatch MCP 서버 설정 (Docker 컨테이너로 실행 중)
-        # AWS MCP 서버들은 /mcp 엔드포인트 사용 (Streamable HTTP)
-        # CLOUDWATCH_MCP_TRANSPORT=streamable-http 로 설정 시 활성화
-        if settings.aws_region and settings.cloudwatch_mcp_transport == "streamable-http":
+        # CloudWatch MCP 서버
+        if settings.aws_region:
             cloudwatch_mcp_url = settings.cloudwatch_mcp_url or "http://cloudwatch-mcp:8000/mcp"
             self._servers["cloudwatch"] = MCPServerConnection(
                 name="cloudwatch",
                 url=cloudwatch_mcp_url
             )
             logger.info(f"CloudWatch MCP server configured at {cloudwatch_mcp_url}")
-        else:
-            logger.info(f"CloudWatch MCP server NOT configured (aws_region={settings.aws_region}, transport={settings.cloudwatch_mcp_transport})")
 
-        # AWS API MCP 서버 설정 (Docker 컨테이너로 실행 중)
+        # AWS API MCP 서버
         if settings.aws_region:
             aws_api_mcp_url = settings.aws_api_mcp_url or "http://aws-api-mcp:8000/mcp"
             self._servers["aws-api"] = MCPServerConnection(
@@ -257,6 +253,7 @@ class MCPManager:
                 url=aws_api_mcp_url
             )
             logger.info(f"AWS API MCP server configured at {aws_api_mcp_url}")
+
 
     async def connect(self) -> bool:
         """모든 MCP 서버에 연결"""
