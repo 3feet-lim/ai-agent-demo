@@ -417,10 +417,16 @@ body {
   margin: 6px 0;
 }
 
+.message-content .table-wrapper {
+  overflow-x: auto;
+  margin: 8px 0;
+  -webkit-overflow-scrolling: touch;
+}
+
 .message-content table {
   border-collapse: collapse;
-  margin: 8px 0;
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
 }
 
 .message-content th,
@@ -429,6 +435,7 @@ body {
   padding: 6px 10px;
   text-align: left;
   font-size: 13px;
+  white-space: nowrap;
 }
 
 .message-content th {

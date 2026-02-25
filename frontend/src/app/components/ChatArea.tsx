@@ -202,6 +202,14 @@ export default function ChatArea({ messages, isLoading }: ChatAreaProps) {
               remarkPlugins={[remarkGfm]}
               rehypePlugins={[rehypeRaw]}
               components={{
+                // 테이블을 스크롤 가능한 wrapper로 감싸기
+                table({ children, ...props }) {
+                  return (
+                    <div className="table-wrapper">
+                      <table {...props}>{children}</table>
+                    </div>
+                  );
+                },
                 code({ className, children, ...props }) {
                   const match = /language-(\w+)/.exec(className || "");
                   const codeString = String(children).replace(/\n$/, "");
