@@ -4,6 +4,7 @@ MCP 도구를 실제로 호출하는 ReAct 에이전트 구현
 """
 import json
 import logging
+import time
 from collections import Counter
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Any
@@ -326,9 +327,29 @@ class BedrockAgent:
             "",
             time_info,
             "",
+            "## When to Use Tools vs. Direct Answer",
+            "",
+            "CRITICAL: Not every question requires tool calls. Decide FIRST before acting.",
+            "",
+            "### Answer DIRECTLY without tools:",
+            "- General knowledge questions (e.g., 'OOMKilled가 뭐야?', 'EKS와 ECS 차이')",
+            "- Explaining concepts, architecture, or best practices",
+            "- Follow-up questions about data you already retrieved in this conversation",
+            "- Summarizing or reformatting information already in the chat history",
+            "- Greetings, small talk, or clarification questions",
+            "",
+            "### Use tools ONLY when:",
+            "- The user asks about CURRENT, REAL-TIME infrastructure state",
+            "- The user provides a specific alarm/incident that needs investigation",
+            "- The user asks for actual metrics, logs, or resource status",
+            "- The answer requires live data that you cannot know without querying",
+            "",
+            "If in doubt, ask yourself: 'Can I answer this from general knowledge?'",
+            "If yes, answer immediately. Do NOT call tools just to seem thorough.",
+            "",
             "## Tool Selection Strategy",
             "",
-            "You have three categories of tools. Choose the most relevant tool(s)",
+            "When tools ARE needed, choose the most relevant tool(s)",
             "based on the situation — do NOT follow a fixed order.",
             "",
             "### Available Tool Categories",
@@ -685,6 +706,10 @@ class BedrockAgent:
             images=images,
         )
 
+        stream_start = time.monotonic()
+        first_token_time = None
+        tool_call_count = 0
+
         try:
             async for event in self._graph.astream_events(
                 {"messages": messages},
@@ -695,8 +720,10 @@ class BedrockAgent:
 
                 # 도구 호출 시작
                 if kind == "on_tool_start":
+                    tool_call_count += 1
                     tool_name = event.get("name", "unknown")
                     tool_input = event.get("data", {}).get("input", {})
+                    logger.info(f"[성능] 도구 호출 #{tool_call_count}: {tool_name} (경과: {time.monotonic() - stream_start:.1f}s)")
                     yield {
                         "type": "tool_start",
                         "name": tool_name,
@@ -731,16 +758,27 @@ class BedrockAgent:
                     if chunk and hasattr(chunk, "content"):
                         content = chunk.content
                         if isinstance(content, str) and content:
+                            if first_token_time is None:
+                                first_token_time = time.monotonic()
+                                logger.info(f"[성능] 첫 토큰 도착: {first_token_time - stream_start:.1f}s (도구 호출 {tool_call_count}회)")
                             yield {"type": "token", "content": content}
                         elif isinstance(content, list):
                             for block in content:
                                 if isinstance(block, dict) and block.get("type") == "text":
                                     text = block.get("text", "")
                                     if text:
+                                        if first_token_time is None:
+                                            first_token_time = time.monotonic()
+                                            logger.info(f"[성능] 첫 토큰 도착: {first_token_time - stream_start:.1f}s (도구 호출 {tool_call_count}회)")
                                         yield {"type": "token", "content": text}
+
+            # 정상 완료 시 성능 로그
+            total_time = time.monotonic() - stream_start
+            logger.info(f"[성능] 스트리밍 완료: {total_time:.1f}s, 도구 호출 {tool_call_count}회")
 
         except GraphRecursionError:
             logger.warning("도구 호출 횟수 제한(recursion_limit=30)에 도달했습니다.")
+            logger.info(f"[성능] 총 소요: {time.monotonic() - stream_start:.1f}s, 도구 호출 {tool_call_count}회 (제한 도달)")
             yield {
                 "type": "token",
                 "content": (
