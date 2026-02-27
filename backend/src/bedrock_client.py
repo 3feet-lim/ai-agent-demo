@@ -434,7 +434,7 @@ class BedrockAgent:
         kst_str = now_kst.strftime('%Y-%m-%d %H:%M:%S')
         return f"Current time - UTC: {utc_str} / KST: {kst_str}"
 
-    def _build_system_prompt(self, mcp_context: MCPContext) -> str:
+    def _build_system_prompt(self, mcp_context: MCPContext, enforced_time_window: tuple[str, str] | None = None) -> str:
         """시스템 프롬프트 생성 (영어로 작성, 응답은 한국어 지시)"""
         time_info = self._get_current_time_info()
 
@@ -480,8 +480,10 @@ class BedrockAgent:
             "",
             "### Timezone (CRITICAL)",
             "- Assume user times are KST (UTC+9). Convert: KST - 9h = UTC.",
-            "- Query tools with ±15 min around the user-specified time.",
-            "- Show both: '조회 시간 범위: HH:MM~HH:MM (KST) / HH:MM~HH:MM (UTC)'",
+            "- Tool time ranges are enforced by code at ±10 min from alarm time.",
+            "- In the report, '분석 기간' MUST exactly match the enforced range (±10 min).",
+            "  Example: alarm at 19:00:22 UTC → 분석 기간: 18:50~19:10 (UTC) / 03:50~04:10 (KST)",
+            "- NEVER round, extend, or fabricate the analysis time range.",
             "- No specified time → use most recent 30 minutes.",
             "",
             "### Anti-Hallucination (CRITICAL)",
@@ -533,7 +535,7 @@ class BedrockAgent:
             "",
             "**분석 시간**: YYYY-MM-DD HH:MM (KST)",
             "**대상 시스템**: (서비스명)",
-            "**분석 기간**: (시작 ~ 종료, KST/UTC 병기)",
+            "**분석 기간**: (알람 시각 ±10분, KST/UTC 병기. 코드 강제 범위와 일치해야 함)",
             "",
             "### 현상 요약",
             "(1~2문장)",
@@ -557,6 +559,23 @@ class BedrockAgent:
         ]
 
         base_prompt = "\n".join(lines)
+
+        # 알람 시간 범위가 코드에서 강제되고 있으면 프롬프트에 명시
+        if enforced_time_window:
+            start_utc, end_utc = enforced_time_window
+            # UTC → KST 변환
+            start_dt = datetime.strptime(start_utc, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            end_dt = datetime.strptime(end_utc, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            kst = timezone(timedelta(hours=9))
+            start_kst = start_dt.astimezone(kst).strftime("%Y-%m-%d %H:%M:%S")
+            end_kst = end_dt.astimezone(kst).strftime("%Y-%m-%d %H:%M:%S")
+            base_prompt += (
+                f"\n\n## ENFORCED TIME RANGE (code-level, cannot be changed)\n"
+                f"- UTC: {start_utc} ~ {end_utc}\n"
+                f"- KST: {start_kst} ~ {end_kst}\n"
+                f"- All tool calls are forced to this range. Your '분석 기간' MUST match this exactly.\n"
+                f"- Do NOT write any other time range in the report."
+            )
 
         # 도구 목록 추가
         if mcp_context.tools:
@@ -728,7 +747,11 @@ class BedrockAgent:
         # 알람 메시지에서 발생 시각 추출 → 도구 시간 범위 강제
         time_window = parse_alarm_time_window(message)
         if time_window:
-            logger.info(f"[시간 강제] 알람 시각 감지: {time_window[0]} ~ {time_window[1]}")
+            # 원본 타임존 정보도 로그에 포함
+            tz_match = _ALARM_TIME_PATTERN.search(message)
+            original_tz = tz_match.group(3) if tz_match and tz_match.group(3) else "UTC(기본값)"
+            original_time = f"{tz_match.group(1)} {tz_match.group(2)}" if tz_match else "?"
+            logger.info(f"[시간 강제] 알람 시각 감지: 원본={original_time} {original_tz} → UTC 범위={time_window[0]} ~ {time_window[1]}")
             for tool in self._tools:
                 if isinstance(tool, MCPToolWrapper):
                     tool.enforced_time_window = time_window
@@ -739,7 +762,7 @@ class BedrockAgent:
                     tool.enforced_time_window = None
 
         context: MCPContext = await self._mcp_manager.get_context()
-        system_prompt = self._build_system_prompt(context)
+        system_prompt = self._build_system_prompt(context, enforced_time_window=time_window)
 
         current_history = history + [{"role": "user", "content": message}]
 
@@ -864,11 +887,14 @@ class BedrockAgent:
 
         history = history or []
 
+        # 알람 시간 범위 파싱
+        time_window = parse_alarm_time_window(message)
+
         # MCP에서 컨텍스트 수집
         context: MCPContext = await self._mcp_manager.get_context()
 
         # 시스템 프롬프트 생성 (현재 시간 포함)
-        system_prompt = self._build_system_prompt(context)
+        system_prompt = self._build_system_prompt(context, enforced_time_window=time_window)
 
         # 히스토리에 현재 메시지 추가
         current_history = history + [{"role": "user", "content": message}]
