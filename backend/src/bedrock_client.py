@@ -326,34 +326,40 @@ class BedrockAgent:
             "",
             time_info,
             "",
-            "## Infrastructure Query Procedure",
+            "## Tool Selection Strategy",
             "",
-            "When the user asks about infrastructure status, server performance,",
-            "incidents, or resource usage, you MUST follow these steps in order:",
+            "You have three categories of tools. Choose the most relevant tool(s)",
+            "based on the situation — do NOT follow a fixed order.",
             "",
-            "### Step 1: Grafana Metrics (Highest Priority)",
-            "- First, use Grafana tools to query dashboard/panel metrics.",
-            "- Check key indicators: CPU, memory, network, disk, request count, response time.",
-            "- Identify time windows with anomalies or spikes.",
+            "### Available Tool Categories",
+            "- Grafana: Time-series metrics (CPU, memory trends, restart counts, network I/O)",
+            "- CloudWatch Logs: Actual error messages, stack traces, application logs",
+            "- AWS CLI: EKS/ECS cluster status, node group state, EC2 instance status,",
+            "  RDS events, ALB/NLB target health, Auto Scaling activity",
             "",
-            "### Step 2: CloudWatch Logs (Detailed Analysis)",
-            "- If anomalies are found in Grafana metrics, use CloudWatch MCP tools",
-            "  to query logs for the relevant time window.",
-            "- Specify appropriate log groups and filter patterns to search for error/warning logs.",
-            "- Find the root cause of metric anomalies from the logs.",
+            "### Situation-Based Tool Selection",
+            "Choose the best starting tool based on the alarm type or user question:",
             "",
-            "### Step 3: AWS CLI (Additional Investigation)",
-            "- If the above steps do not provide sufficient information,",
-            "  use AWS CLI tools for further investigation.",
-            "- Examples:",
-            "  - EC2 instance status",
-            "  - ECS/EKS service and task status",
-            "  - RDS instance status and events",
-            "  - ALB/NLB target group health checks",
-            "  - Auto Scaling activity history",
+            "| Situation | Start With | Then Check |",
+            "|-----------|-----------|------------|",
+            "| OOMKilled / memory alert | Grafana (memory metrics) → AWS CLI (ECS task status / EKS node) | CloudWatch (app logs around kill time) |",
+            "| High CPU / throttling | Grafana (CPU metrics, throttle count) | CloudWatch (heavy processing logs) → AWS CLI (node/instance capacity) |",
+            "| Pod CrashLoopBackOff | CloudWatch (app error logs) → Grafana (restart count trend) | AWS CLI (ECS service events / EKS node status) |",
+            "| 5xx errors / latency spike | Grafana (request rate, error rate, latency) → CloudWatch (error logs) | AWS CLI (target group health) |",
+            "| Node NotReady / scaling | AWS CLI (node group status, ASG activity) → Grafana (node metrics) | CloudWatch (kubelet/system logs) |",
+            "| Deployment failure | AWS CLI (ECS deployment status / EKS node group) → CloudWatch (deploy logs) | Grafana (before/after metrics) |",
+            "| Disk pressure | Grafana (disk usage trend) → AWS CLI (EBS volume status) | CloudWatch (disk-related logs) |",
+            "| General status inquiry | Grafana (overview dashboards) → AWS CLI (resource list) | CloudWatch (recent errors) |",
+            "",
+            "### Rules",
+            "- If the user provides a Prometheus alarm, extract the alert name, severity,",
+            "  affected resource, and timestamp. Use these to pick the right tool and query.",
+            "- Always cross-reference: if one tool gives a clue, verify with another tool.",
+            "- If the first tool gives a clear answer, you may skip the others.",
+            "- If a tool returns no useful data, move to the next relevant tool.",
             "",
             "### Response Guidelines",
-            "- Summarize the current state by combining information from each step.",
+            "- Summarize the current state by combining information from the tools you used.",
             "- If anomalies are found, provide root cause analysis and recommended actions.",
             "- Present numerical data concretely and compare against normal ranges.",
             "- ALWAYS respond in Korean regardless of the language of tool outputs.",
@@ -385,6 +391,18 @@ class BedrockAgent:
             "- In your response, ALWAYS state the time window you actually queried:",
             "  '조회 시간 범위: YYYY-MM-DD HH:MM ~ HH:MM (KST)'",
             "- If the user does NOT specify a time, use the most recent 30 minutes from current time.",
+            "",
+            "### Tool Call Efficiency Rules",
+            "- You have a maximum of ~25 tool calls per conversation turn. Plan wisely.",
+            "- Before calling a tool, ask yourself: 'Do I already have enough data to answer?'",
+            "  If yes, STOP calling tools and write your response.",
+            "- Avoid redundant calls: do not query the same log group or metric twice.",
+            "- If after 15+ tool calls you still lack key information, STOP and write a response",
+            "  using what you have. Clearly mark missing parts as '추가 확인 필요'.",
+            "- When you must stop due to limits, structure your response as:",
+            "  1. '확인된 사항' — what you found so far",
+            "  2. '미확인 사항' — what you could not retrieve and why",
+            "  3. '권장 조치' — what the user can check manually",
             "",
             "### Counting and Statistics Rules",
             "- Tool results include a ===STATS=== section with pre-calculated counts.",
@@ -726,8 +744,11 @@ class BedrockAgent:
             yield {
                 "type": "token",
                 "content": (
-                    "죄송합니다. 요청을 처리하는 과정에서 도구 호출 횟수 제한에 도달했습니다. "
-                    "질문의 범위를 좁히거나, 더 구체적으로 질문해 주시면 더 나은 결과를 드릴 수 있습니다."
+                    "\n\n---\n"
+                    "⚠️ **도구 호출 횟수 제한에 도달하여 분석을 중단합니다.**\n\n"
+                    "위 내용은 제한에 도달하기 전까지 수집된 정보를 기반으로 작성되었습니다. "
+                    "누락된 정보가 있을 수 있으니, 추가 확인이 필요한 부분은 "
+                    "질문의 범위를 좁혀서 다시 질문해 주세요."
                 ),
             }
 
@@ -802,9 +823,23 @@ class BedrockAgent:
 
         except GraphRecursionError:
             logger.warning("도구 호출 횟수 제한(recursion_limit=30)에 도달했습니다.")
+            # 제한 도달 전까지 생성된 AI 메시지가 있으면 활용
+            try:
+                ai_msgs = [m for m in result["messages"] if isinstance(m, AIMessage)]
+                if ai_msgs:
+                    partial = ai_msgs[-1].content
+                    if isinstance(partial, str) and partial.strip():
+                        return (
+                            partial + "\n\n---\n"
+                            "⚠️ **도구 호출 횟수 제한에 도달하여 분석을 중단합니다.**\n\n"
+                            "위 내용은 제한에 도달하기 전까지 수집된 정보입니다. "
+                            "추가 확인이 필요하면 질문의 범위를 좁혀서 다시 질문해 주세요."
+                        )
+            except Exception:
+                pass
             return (
-                "죄송합니다. 요청을 처리하는 과정에서 도구 호출 횟수 제한에 도달했습니다. "
-                "질문의 범위를 좁히거나, 더 구체적으로 질문해 주시면 더 나은 결과를 드릴 수 있습니다."
+                "⚠️ 도구 호출 횟수 제한에 도달하여 분석을 완료하지 못했습니다.\n\n"
+                "질문의 범위를 좁혀서 다시 질문해 주세요."
             )
 
         except Exception as e:
