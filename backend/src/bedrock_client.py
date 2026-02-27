@@ -141,13 +141,10 @@ class MCPToolWrapper(BaseTool):
         stats_header = "\n".join(summary_parts)
         return f"===STATS===\n{stats_header}\n===END STATS===\n\n{raw}"
 
-    # call_aws에서 차단할 명령어 패턴 (전용 MCP 도구가 있는 경우)
+    # call_aws에서 차단할 명령어 패턴 (Grafana 전용 도구가 있는 메트릭 조회)
     _BLOCKED_AWS_COMMANDS = [
         "aws cloudwatch get-metric",
         "aws cloudwatch list-metrics",
-        "aws logs get-log",
-        "aws logs filter-log",
-        "aws logs start-query",
     ]
 
     async def _arun(self, **kwargs) -> str:
@@ -363,7 +360,6 @@ class BedrockAgent:
             "- AWS CLI (call_aws): EKS/ECS cluster status, EC2 instances, RDS events, ALB health, ASG activity",
             "  → Use for resource status and management commands.",
             "  → NEVER use 'aws cloudwatch get-metric-data' via call_aws. Use Grafana instead.",
-            "  → NEVER use 'aws logs' via call_aws. Use CloudWatch Logs tools instead.",
             "",
             "### Situation-Based Selection",
             "| Situation | Start With | Then Check |",
