@@ -4,6 +4,7 @@ MCP 도구를 실제로 호출하는 ReAct 에이전트 구현
 """
 import json
 import logging
+import re
 import time
 from collections import Counter
 from datetime import datetime, timezone, timedelta
@@ -57,6 +58,45 @@ def create_pydantic_model_from_schema(name: str, schema: dict) -> type[BaseModel
     return create_model(f"{name}Input", **fields)
 
 
+# 알람 메시지에서 발생 시각을 추출하고 ±10분 범위를 계산
+_ALARM_TIME_PATTERN = re.compile(
+    r"발생\s*시간\s*[:：]\s*(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\s*(UTC|KST)?",
+    re.IGNORECASE,
+)
+
+# 시간 파라미터를 가진 도구와 해당 파라미터 이름 매핑
+_TIME_PARAM_MAP = {
+    # CloudWatch Logs 도구
+    "execute_log_insights_query": ("start_time", "end_time"),
+    # Grafana 도구
+    "query_prometheus": ("startTime", "endTime"),
+}
+
+
+def parse_alarm_time_window(message: str, margin_minutes: int = 10):
+    """
+    사용자 메시지에서 알람 발생 시각을 추출하고 ±margin 범위를 반환.
+    Returns: (start_utc_iso, end_utc_iso) 또는 None
+    """
+    m = _ALARM_TIME_PATTERN.search(message)
+    if not m:
+        return None
+
+    date_str, time_str, tz_str = m.group(1), m.group(2), m.group(3)
+    dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M:%S")
+
+    # KST면 UTC로 변환
+    if tz_str and tz_str.upper() == "KST":
+        dt = dt.replace(tzinfo=timezone(timedelta(hours=9)))
+        dt = dt.astimezone(timezone.utc)
+    else:
+        dt = dt.replace(tzinfo=timezone.utc)
+
+    start = dt - timedelta(minutes=margin_minutes)
+    end = dt + timedelta(minutes=margin_minutes)
+    return (start.strftime("%Y-%m-%dT%H:%M:%SZ"), end.strftime("%Y-%m-%dT%H:%M:%SZ"))
+
+
 class MCPToolWrapper(BaseTool):
     """MCP 도구를 LangChain BaseTool로 래핑"""
     name: str
@@ -64,6 +104,8 @@ class MCPToolWrapper(BaseTool):
     args_schema: type[BaseModel]
     mcp_tool: MCPTool
     mcp_manager: Any
+    # 알람 시간 범위 (설정 시 도구 호출의 시간 파라미터를 강제 덮어씀)
+    enforced_time_window: Optional[tuple[str, str]] = None
 
     class Config:
         arbitrary_types_allowed = True
@@ -162,6 +204,63 @@ class MCPToolWrapper(BaseTool):
                         )
                         logger.warning(f"[차단] call_aws 우회 시도: {cli_cmd[:100]}")
                         return redirect_msg
+
+            # 알람 시간 범위가 설정되어 있으면 시간 파라미터 강제 덮어쓰기
+            if self.enforced_time_window:
+                enforced_start, enforced_end = self.enforced_time_window
+                param_names = _TIME_PARAM_MAP.get(self.name)
+
+                if param_names:
+                    start_key, end_key = param_names
+                    original_start = kwargs.get(start_key)
+                    original_end = kwargs.get(end_key)
+                    kwargs[start_key] = enforced_start
+                    kwargs[end_key] = enforced_end
+                    if original_start != enforced_start or original_end != enforced_end:
+                        logger.info(
+                            f"[시간 강제] {self.name}: "
+                            f"{original_start}~{original_end} → {enforced_start}~{enforced_end}"
+                        )
+
+                # call_aws CLI 명령어 안의 --start-time, --end-time 치환
+                if self.name == "call_aws" and "cli_command" in kwargs:
+                    cmd = kwargs["cli_command"]
+                    # epoch 값 미리 계산
+                    enforced_start_epoch = int(
+                        datetime.strptime(enforced_start, "%Y-%m-%dT%H:%M:%SZ")
+                        .replace(tzinfo=timezone.utc)
+                        .timestamp() * 1000
+                    )
+                    enforced_end_epoch = int(
+                        datetime.strptime(enforced_end, "%Y-%m-%dT%H:%M:%SZ")
+                        .replace(tzinfo=timezone.utc)
+                        .timestamp() * 1000
+                    )
+                    # epoch 형식 먼저 치환 (순서 중요: \S+가 epoch도 매칭하므로)
+                    cmd = re.sub(
+                        r"(--start-time\s+)\d{10,13}",
+                        rf"\g<1>{enforced_start_epoch}",
+                        cmd,
+                    )
+                    cmd = re.sub(
+                        r"(--end-time\s+)\d{10,13}",
+                        rf"\g<1>{enforced_end_epoch}",
+                        cmd,
+                    )
+                    # ISO 형식 치환 (epoch이 아닌 나머지)
+                    cmd = re.sub(
+                        r"--start-time\s+(?!\d{10,13}\b)\S+",
+                        f"--start-time {enforced_start}",
+                        cmd,
+                    )
+                    cmd = re.sub(
+                        r"--end-time\s+(?!\d{10,13}\b)\S+",
+                        f"--end-time {enforced_end}",
+                        cmd,
+                    )
+                    if cmd != kwargs["cli_command"]:
+                        logger.info(f"[시간 강제] call_aws CLI 시간 치환 완료")
+                    kwargs["cli_command"] = cmd
 
             logger.info(f"MCP tool {self.name} called with: {kwargs}")
             result = await self.mcp_manager.execute_tool(self.mcp_tool.name, kwargs)
@@ -625,6 +724,19 @@ class BedrockAgent:
         await self._ensure_initialized()
 
         history = history or []
+
+        # 알람 메시지에서 발생 시각 추출 → 도구 시간 범위 강제
+        time_window = parse_alarm_time_window(message)
+        if time_window:
+            logger.info(f"[시간 강제] 알람 시각 감지: {time_window[0]} ~ {time_window[1]}")
+            for tool in self._tools:
+                if isinstance(tool, MCPToolWrapper):
+                    tool.enforced_time_window = time_window
+        else:
+            # 알람이 아닌 일반 질문이면 시간 강제 해제
+            for tool in self._tools:
+                if isinstance(tool, MCPToolWrapper):
+                    tool.enforced_time_window = None
 
         context: MCPContext = await self._mcp_manager.get_context()
         system_prompt = self._build_system_prompt(context)
