@@ -141,9 +141,31 @@ class MCPToolWrapper(BaseTool):
         stats_header = "\n".join(summary_parts)
         return f"===STATS===\n{stats_header}\n===END STATS===\n\n{raw}"
 
+    # call_aws에서 차단할 명령어 패턴 (전용 MCP 도구가 있는 경우)
+    _BLOCKED_AWS_COMMANDS = [
+        "aws cloudwatch get-metric",
+        "aws cloudwatch list-metrics",
+        "aws logs get-log",
+        "aws logs filter-log",
+        "aws logs start-query",
+    ]
+
     async def _arun(self, **kwargs) -> str:
         """비동기 도구 실행"""
         try:
+            # call_aws에서 전용 도구가 있는 명령어를 호출하면 리다이렉트 안내
+            if self.name == "call_aws":
+                cli_cmd = str(kwargs.get("cli_command", "")).lower()
+                for blocked in self._BLOCKED_AWS_COMMANDS:
+                    if blocked in cli_cmd:
+                        redirect_msg = (
+                            f"이 명령어는 call_aws 대신 전용 도구를 사용하세요. "
+                            f"메트릭 조회 → Grafana 도구, 로그 조회 → CloudWatch Logs 도구. "
+                            f"차단된 명령어: {kwargs.get('cli_command', '')[:100]}"
+                        )
+                        logger.warning(f"[차단] call_aws 우회 시도: {cli_cmd[:100]}")
+                        return redirect_msg
+
             logger.info(f"MCP tool {self.name} called with: {kwargs}")
             result = await self.mcp_manager.execute_tool(self.mcp_tool.name, kwargs)
 
@@ -335,8 +357,13 @@ class BedrockAgent:
             "",
             "### Tool Categories",
             "- Grafana: time-series metrics (CPU, memory, restart counts, network I/O)",
+            "  → ALWAYS use Grafana tools for metrics. This is the primary metrics source.",
             "- CloudWatch Logs: error messages, stack traces, application logs",
-            "- AWS CLI: EKS/ECS cluster status, EC2 instances, RDS events, ALB health, ASG activity",
+            "  → Use ONLY for log queries, NOT for metrics.",
+            "- AWS CLI (call_aws): EKS/ECS cluster status, EC2 instances, RDS events, ALB health, ASG activity",
+            "  → Use for resource status and management commands.",
+            "  → NEVER use 'aws cloudwatch get-metric-data' via call_aws. Use Grafana instead.",
+            "  → NEVER use 'aws logs' via call_aws. Use CloudWatch Logs tools instead.",
             "",
             "### Situation-Based Selection",
             "| Situation | Start With | Then Check |",
