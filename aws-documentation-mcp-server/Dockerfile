@@ -51,6 +51,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Installing separately from its dependencies allows optimal layer caching
 COPY . /app
 RUN --mount=type=cache,target=/root/.cache/uv \
+    UV_FROZEN=false uv lock && \
     uv sync --python 3.13 --frozen --no-dev --no-editable
 
 # Make the directory just in case it doesn't exist
