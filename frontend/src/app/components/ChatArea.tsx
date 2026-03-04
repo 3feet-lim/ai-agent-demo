@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkBreaks from "remark-breaks";
 import rehypeRaw from "rehype-raw";
 // 모든 언어가 포함된 Prism 번들 사용 (별도 등록 불필요)
 import SyntaxHighlighter from "react-syntax-highlighter/dist/esm/prism-light";
@@ -199,7 +200,7 @@ export default function ChatArea({ messages, isLoading }: ChatAreaProps) {
               </div>
             )}
             <Markdown
-              remarkPlugins={[remarkGfm]}
+              remarkPlugins={[remarkGfm, remarkBreaks]}
               rehypePlugins={[rehypeRaw]}
               components={{
                 // 테이블을 스크롤 가능한 wrapper로 감싸기
