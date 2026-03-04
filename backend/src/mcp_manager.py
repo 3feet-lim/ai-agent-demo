@@ -254,6 +254,14 @@ class MCPManager:
             )
             logger.info(f"AWS API MCP server configured at {aws_api_mcp_url}")
 
+        # AWS Documentation MCP 서버
+        aws_docs_mcp_url = settings.aws_docs_mcp_url or "http://aws-docs-mcp:8000/mcp"
+        self._servers["aws-docs"] = MCPServerConnection(
+            name="aws-docs",
+            url=aws_docs_mcp_url
+        )
+        logger.info(f"AWS Documentation MCP server configured at {aws_docs_mcp_url}")
+
 
     async def connect(self) -> bool:
         """모든 MCP 서버에 연결"""

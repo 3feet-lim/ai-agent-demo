@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     aws_profile: str | None = None
     cloudwatch_mcp_url: str | None = None  # CloudWatch MCP 서버 URL
     aws_api_mcp_url: str | None = None  # AWS API MCP 서버 URL
+    aws_docs_mcp_url: str | None = None  # AWS Documentation MCP 서버 URL
 
     model_config = SettingsConfigDict(
         env_file=".env",
