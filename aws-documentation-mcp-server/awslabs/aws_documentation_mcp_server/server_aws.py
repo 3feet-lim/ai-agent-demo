@@ -83,11 +83,6 @@ mcp = FastMCP(
     - Use `recommend` when: You want to find related content to a documentation page you're already viewing or need to find newly released information
     - Use `recommend` as a fallback when: Multiple searches have not yielded the specific information needed
     """,
-    dependencies=[
-        'pydantic',
-        'httpx',
-        'beautifulsoup4',
-    ],
 )
 
 
