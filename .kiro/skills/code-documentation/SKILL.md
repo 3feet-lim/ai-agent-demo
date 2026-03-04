@@ -1,5 +1,6 @@
 ---
 name: code-documentation
+description: 코드 문서화 스타일 가이드 (Docstring, TSDoc, README, API 문서 등)를 제공합니다.
 inclusion: manual
 ---
 

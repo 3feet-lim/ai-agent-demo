@@ -23,6 +23,8 @@ services:
   # CloudWatch MCP 서버
   cloudwatch-mcp:
     image: cloudwatch-mcp-server:latest
+    build:
+      context: ./cloudwatch-mcp-server
     container_name: cloudwatch-mcp
     hostname: cloudwatch-mcp
     env_file:
@@ -47,8 +49,9 @@ services:
 
   # AWS API MCP 서버
   aws-api-mcp:
-    #image: awslabs/aws-api-mcp-server:latest
     image: aws-api-mcp:latest
+    build:
+      context: ./aws-api-mcp-server
     container_name: aws-api-mcp
     hostname: aws-api-mcp
     env_file:
@@ -71,6 +74,31 @@ services:
       retries: 3
       start_period: 10s
 
+  # AWS Documentation MCP 서버
+  aws-docs-mcp:
+    image: aws-documentation-mcp-server:latest
+    build:
+      context: ./aws-documentation-mcp-server
+    container_name: aws-docs-mcp
+    hostname: aws-docs-mcp
+    env_file:
+      - .env
+    environment:
+      # Streamable HTTP 모드로 실행
+      - AWS_DOCS_MCP_TRANSPORT=streamable-http
+      - AWS_DOCS_MCP_HOST=aws-docs-mcp
+      - AWS_DOCS_MCP_PORT=8000
+    networks:
+      app-network:
+        aliases:
+          - aws-docs-mcp
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1 2>/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
   frontend:
     build:
@@ -114,6 +142,8 @@ services:
       cloudwatch-mcp:
         condition: service_healthy
       aws-api-mcp:
+        condition: service_healthy
+      aws-docs-mcp:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]

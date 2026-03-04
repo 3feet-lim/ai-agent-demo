@@ -1,5 +1,6 @@
 ---
 name: code-review
+description: 코드 품질, 보안, 성능 관점의 리뷰 체크리스트와 기준을 제공합니다.
 inclusion: manual
 ---
 

@@ -1,5 +1,6 @@
 ---
 name: code-testing
+description: pytest 기반 테스트 작성 패턴과 가이드를 제공합니다.
 inclusion: manual
 ---
 

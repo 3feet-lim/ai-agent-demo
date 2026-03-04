@@ -1,5 +1,6 @@
 ---
 name: code-generation
+description: 프로젝트 컨벤션에 맞는 코드 생성 패턴과 가이드를 제공합니다.
 inclusion: manual
 ---
 
