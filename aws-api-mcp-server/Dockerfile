@@ -82,6 +82,9 @@ COPY --from=uv --chown=app:app /app/cache /app/cache
 # 헬스체크 스크립트 복사 및 실행 권한 부여
 COPY --chmod=755 ./docker-healthcheck.sh /usr/local/bin/docker-healthcheck.sh
 
+# .aws 디렉토리 및 로그 하위 디렉토리 미리 생성 (app 유저 소유)
+RUN mkdir -p /app/.aws/aws-api-mcp && chown -R app:app /app/.aws
+
 # Run as non-root
 USER app
 
