@@ -3,7 +3,7 @@ LangChain + LangGraph 기반 Bedrock 클라이언트
 MCP 도구를 실제로 호출하는 ReAct 에이전트 구현
 """
 import json
-import logging
+from loguru import logger
 import re
 import time
 from collections import Counter
@@ -21,8 +21,6 @@ from .config import get_settings
 from .mcp_manager import get_mcp_manager, MCPContext, MCPTool
 from .conversation_store import get_conversation_store
 from .account_profile_resolver import AccountProfileResolver
-
-logger = logging.getLogger(__name__)
 
 
 def create_pydantic_model_from_schema(name: str, schema: dict) -> type[BaseModel]:

@@ -3,7 +3,7 @@ MCP (Model Context Protocol) 관리자
 Grafana MCP와 CloudWatch MCP 서버를 관리하고 도구를 제공합니다.
 """
 import asyncio
-import logging
+from loguru import logger
 from typing import Optional, Any
 from dataclasses import dataclass, field
 
@@ -12,8 +12,6 @@ from mcp import ClientSession, types
 from mcp.client.streamable_http import streamable_http_client
 
 from .config import get_settings
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass

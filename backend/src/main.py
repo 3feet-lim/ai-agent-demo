@@ -4,13 +4,14 @@ LangChain + LangGraph + Bedrock 기반
 """
 import asyncio
 import json
-import logging
+import sys
 from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from loguru import logger
 from pydantic import BaseModel
 
 from .config import get_settings
@@ -18,13 +19,14 @@ from .bedrock_client import get_bedrock_agent
 from .conversation_store import get_conversation_store
 from .mcp_manager import get_mcp_manager
 
-# 로깅 설정
+# loguru 설정
 settings = get_settings()
-logging.basicConfig(
-    level=getattr(logging, settings.log_level),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+logger.remove()  # 기본 핸들러 제거
+logger.add(
+    sys.stderr,
+    level=settings.log_level,
+    format="{time:YYYY-MM-DD HH:mm:ss} - {name} - {level} - {message}",
 )
-logger = logging.getLogger(__name__)
 
 
 async def _init_mcp_background():
