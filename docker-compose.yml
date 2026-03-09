@@ -37,7 +37,7 @@ services:
       - AUTH_TYPE=no-auth
     volumes:
       # 멀티 프로필 지원을 위한 AWS credentials 마운트
-      - ~/.aws:/root/.aws:ro
+      - ~/.aws:/app/.aws:ro
     networks:
       app-network:
         aliases:
@@ -67,7 +67,7 @@ services:
       - AUTH_TYPE=no-auth
     volumes:
       # 멀티 프로필 지원을 위한 AWS credentials 마운트
-      - ~/.aws:/root/.aws:ro
+      - ~/.aws:/app/.aws:ro
     networks:
       app-network:
         aliases:
