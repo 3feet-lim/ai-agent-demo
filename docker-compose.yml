@@ -36,8 +36,9 @@ services:
       - CLOUDWATCH_MCP_PORT=8000
       - AUTH_TYPE=no-auth
     volumes:
-      # 멀티 프로필 지원을 위한 AWS credentials 마운트
-      - ~/.aws:/app/.aws:ro
+      # 멀티 프로필 지원을 위한 AWS credentials 개별 파일 마운트
+      - ~/.aws/config:/app/.aws/config:ro
+      - ~/.aws/credentials:/app/.aws/credentials:ro
     networks:
       app-network:
         aliases:
@@ -66,8 +67,9 @@ services:
       - AWS_API_MCP_PORT=8000
       - AUTH_TYPE=no-auth
     volumes:
-      # 멀티 프로필 지원을 위한 AWS credentials 마운트
-      - ~/.aws:/app/.aws:ro
+      # 멀티 프로필 지원을 위한 AWS credentials 개별 파일 마운트
+      - ~/.aws/config:/app/.aws/config:ro
+      - ~/.aws/credentials:/app/.aws/credentials:ro
     networks:
       app-network:
         aliases:
