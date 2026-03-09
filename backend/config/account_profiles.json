@@ -1,0 +1,31 @@
+{
+  "accounts": [
+    {
+      "account_id": "123456789012",
+      "profile": "profile-a",
+      "role_arn": null,
+      "alias": "운영계정",
+      "description": "운영 환경 (Production)",
+      "matchers": [
+        "prod-cluster",
+        "운영",
+        "prd-",
+        "production"
+      ]
+    },
+    {
+      "account_id": "987654321098",
+      "profile": "profile-b",
+      "role_arn": null,
+      "alias": "스테이징계정",
+      "description": "스테이징 환경 (Staging)",
+      "matchers": [
+        "stg-cluster",
+        "스테이징",
+        "stg-",
+        "staging"
+      ]
+    }
+  ],
+  "default_profile": "default"
+}

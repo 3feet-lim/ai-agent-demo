@@ -35,6 +35,9 @@ services:
       - CLOUDWATCH_MCP_HOST=cloudwatch-mcp
       - CLOUDWATCH_MCP_PORT=8000
       - AUTH_TYPE=no-auth
+    volumes:
+      # 멀티 프로필 지원을 위한 AWS credentials 마운트
+      - ~/.aws:/root/.aws:ro
     networks:
       app-network:
         aliases:
@@ -62,6 +65,9 @@ services:
       - AWS_API_MCP_HOST=aws-api-mcp  # Host 헤더 검증을 위해 컨테이너 이름으로 설정
       - AWS_API_MCP_PORT=8000
       - AUTH_TYPE=no-auth
+    volumes:
+      # 멀티 프로필 지원을 위한 AWS credentials 마운트
+      - ~/.aws:/root/.aws:ro
     networks:
       app-network:
         aliases:

@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field, create_model
 from .config import get_settings
 from .mcp_manager import get_mcp_manager, MCPContext, MCPTool
 from .conversation_store import get_conversation_store
+from .account_profile_resolver import AccountProfileResolver
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +107,8 @@ class MCPToolWrapper(BaseTool):
     mcp_manager: Any
     # 알람 시간 범위 (설정 시 도구 호출의 시간 파라미터를 강제 덮어씀)
     enforced_time_window: Optional[tuple[str, str]] = None
+    # 동적으로 결정된 AWS profile (계정별 자동 전환)
+    resolved_profile: Optional[str] = None
 
     class Config:
         arbitrary_types_allowed = True
@@ -183,6 +186,38 @@ class MCPToolWrapper(BaseTool):
         stats_header = "\n".join(summary_parts)
         return f"===STATS===\n{stats_header}\n===END STATS===\n\n{raw}"
 
+    # CloudWatch MCP 도구 중 profile_name 파라미터를 지원하는 도구 패턴
+    _CW_PROFILE_TOOLS = {"list_log_groups", "get_log_events", "start_live_tail",
+                         "filter_log_events", "start_query", "get_query_results",
+                         "get_metric_data", "list_metrics", "describe_alarms"}
+
+    def _inject_profile(self, kwargs: dict):
+        """
+        resolved_profile을 MCP 도구 파라미터에 주입.
+        - CloudWatch MCP 도구: profile_name 파라미터 추가
+        - AWS API MCP (call_aws): CLI 명령에 --profile 플래그 추가
+        """
+        profile = self.resolved_profile
+        if not profile:
+            return
+
+        server_name = self.mcp_tool.server_name if hasattr(self.mcp_tool, 'server_name') else ""
+
+        # CloudWatch MCP: profile_name 파라미터 주입
+        if server_name == "cloudwatch":
+            # LLM이 이미 profile_name을 지정했으면 덮어쓰지 않음
+            if not kwargs.get("profile_name"):
+                kwargs["profile_name"] = profile
+                logger.info(f"[Profile 주입] {self.name}: profile_name={profile}")
+
+        # AWS API MCP: CLI 명령에 --profile 추가
+        elif server_name == "aws-api" and "cli_command" in kwargs:
+            cmd = kwargs["cli_command"]
+            # 이미 --profile이 있으면 덮어쓰지 않음
+            if "--profile" not in cmd:
+                kwargs["cli_command"] = f"{cmd} --profile {profile}"
+                logger.info(f"[Profile 주입] {self.name}: --profile {profile}")
+
     # call_aws에서 차단할 명령어 패턴 (Grafana 전용 도구가 있는 메트릭 조회)
     _BLOCKED_AWS_COMMANDS = [
         "aws cloudwatch get-metric",
@@ -204,6 +239,10 @@ class MCPToolWrapper(BaseTool):
                         )
                         logger.warning(f"[차단] call_aws 우회 시도: {cli_cmd[:100]}")
                         return redirect_msg
+
+            # AWS profile 자동 주입 (계정별 동적 전환)
+            if self.resolved_profile:
+                self._inject_profile(kwargs)
 
             # 알람 시간 범위가 설정되어 있으면 시간 파라미터 강제 덮어쓰기
             if self.enforced_time_window:
@@ -318,6 +357,7 @@ class BedrockAgent:
         self._tools: list[BaseTool] = []
         self._llm = None
         self._graph = None
+        self._profile_resolver = AccountProfileResolver()
 
     async def _ensure_initialized(self):
         """비동기 초기화 보장"""
@@ -791,6 +831,12 @@ class BedrockAgent:
                 if isinstance(tool, MCPToolWrapper):
                     tool.enforced_time_window = None
 
+        # 메시지에서 계정 식별 → AWS profile 동적 결정
+        resolved_profile = self._profile_resolver.resolve(message)
+        for tool in self._tools:
+            if isinstance(tool, MCPToolWrapper):
+                tool.resolved_profile = resolved_profile
+
         context: MCPContext = await self._mcp_manager.get_context()
         system_prompt = self._build_system_prompt(context, enforced_time_window=time_window)
 
@@ -919,6 +965,13 @@ class BedrockAgent:
 
         # 알람 시간 범위 파싱
         time_window = parse_alarm_time_window(message)
+
+        # 메시지에서 계정 식별 → AWS profile 동적 결정
+        resolved_profile = self._profile_resolver.resolve(message)
+        for tool in self._tools:
+            if isinstance(tool, MCPToolWrapper):
+                tool.enforced_time_window = time_window
+                tool.resolved_profile = resolved_profile
 
         # MCP에서 컨텍스트 수집
         context: MCPContext = await self._mcp_manager.get_context()

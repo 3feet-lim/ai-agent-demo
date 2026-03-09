@@ -23,6 +23,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 소스 코드 복사
 COPY src/ ./src/
 
+# 설정 파일 복사 (계정 프로필 매핑 등)
+COPY config/ ./config/
+
 # 데이터 디렉토리 생성 (SQLite DB 저장용)
 RUN mkdir -p /app/data
 
