@@ -18,6 +18,7 @@ from .config import get_settings
 from .bedrock_client import get_bedrock_agent
 from .conversation_store import get_conversation_store
 from .mcp_manager import get_mcp_manager
+from .webhook_handler import format_alertmanager_payload, send_to_slack
 
 # loguru 설정
 settings = get_settings()
@@ -261,4 +262,53 @@ async def delete_conversation(conversation_id: str):
         raise
     except Exception as e:
         logger.error(f"Error deleting conversation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Prometheus Alertmanager Webhook ──────────────────────────────
+
+@app.post("/api/webhook/alertmanager")
+async def alertmanager_webhook(request: Request):
+    """
+    Prometheus Alertmanager webhook 수신 → Agent 분석 → Slack 전송.
+
+    Alertmanager의 webhook_configs에 이 엔드포인트를 등록하면,
+    알람 발생 시 자동으로 분석 리포트가 Slack으로 전송됩니다.
+
+    Alertmanager 설정 예시:
+      receivers:
+        - name: 'ai-agent'
+          webhook_configs:
+            - url: 'http://backend:8000/api/webhook/alertmanager'
+    """
+    try:
+        payload = await request.json()
+        logger.info(f"[Webhook] Alertmanager 알람 수신: status={payload.get('status')}, "
+                     f"alerts={len(payload.get('alerts', []))}건")
+
+        # firing 상태만 분석 (resolved는 무시)
+        if payload.get("status") == "resolved":
+            logger.info("[Webhook] resolved 알람 → 분석 건너뜀")
+            return {"status": "skipped", "reason": "resolved"}
+
+        # payload를 에이전트가 이해할 수 있는 텍스트로 변환
+        alert_message = format_alertmanager_payload(payload)
+        logger.info(f"[Webhook] 변환된 알람 메시지:\n{alert_message[:500]}")
+
+        # 에이전트로 분석 요청 (비스트리밍)
+        agent = await get_bedrock_agent()
+        analysis = await agent.chat(alert_message)
+        logger.info(f"[Webhook] 분석 완료: {len(analysis)}자")
+
+        # Slack으로 전송
+        slack_sent = await send_to_slack(analysis)
+
+        return {
+            "status": "processed",
+            "analysis_length": len(analysis),
+            "slack_sent": slack_sent,
+        }
+
+    except Exception as e:
+        logger.error(f"[Webhook] 처리 실패: {e}")
         raise HTTPException(status_code=500, detail=str(e))

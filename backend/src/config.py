@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     aws_api_mcp_url: str | None = None  # AWS API MCP 서버 URL
     aws_docs_mcp_url: str | None = None  # AWS Documentation MCP 서버 URL
 
+    # Slack 설정
+    slack_webhook_url: str | None = None  # Slack Incoming Webhook URL
+    slack_channel: str | None = None  # Slack 채널 (선택, webhook 기본 채널 사용 시 불필요)
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
