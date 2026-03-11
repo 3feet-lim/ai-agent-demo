@@ -16,6 +16,7 @@ import argparse
 import botocore.serialize
 import ipaddress
 import jmespath
+import os
 import re
 from ..aws.regions import GLOBAL_SERVICE_REGIONS
 from ..aws.services import (
@@ -839,6 +840,11 @@ def _validate_endpoint(endpoint: str | None):
 
     if hostname == 'localhost':
         hostname = '127.0.0.1'
+
+    # 환경변수로 AWS VPC 엔드포인트 허용 (ALLOW_VPC_ENDPOINTS=true)
+    allow_vpc = os.environ.get('ALLOW_VPC_ENDPOINTS', '').lower() == 'true'
+    if allow_vpc and hostname.endswith('.vpce.amazonaws.com'):
+        return
 
     try:
         ip_obj = ipaddress.ip_address(hostname)
