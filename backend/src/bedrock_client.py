@@ -315,7 +315,21 @@ class MCPToolWrapper(BaseTool):
                 raw = str(result)
 
             # 통계 요약 자동 추가
-            return self._enrich_with_stats(raw)
+            enriched = self._enrich_with_stats(raw)
+
+            # Tool 응답 크기 제한 (토큰 초과 방지)
+            MAX_TOOL_RESPONSE_CHARS = 30000  # 약 7,500~10,000 토큰
+            if len(enriched) > MAX_TOOL_RESPONSE_CHARS:
+                logger.warning(
+                    f"[Truncation] {self.name} 응답 잘림: "
+                    f"{len(enriched):,}자 → {MAX_TOOL_RESPONSE_CHARS:,}자"
+                )
+                enriched = (
+                    enriched[:MAX_TOOL_RESPONSE_CHARS]
+                    + "\n\n...[⚠️ 응답이 너무 길어 잘렸습니다. "
+                    "필요 시 범위를 좁혀 다시 조회하세요.]"
+                )
+            return enriched
         except Exception as e:
             logger.error(f"Tool execution error for {self.name}: {e}")
             return f"Tool execution error: {str(e)}"
@@ -667,6 +681,74 @@ class BedrockAgent:
     # 슬라이딩 윈도우 크기 (최근 N개 메시지는 원문 유지)
     WINDOW_SIZE = 20
 
+    # 토큰 기반 컨텍스트 제한 (200K 모델 한도 중 응답 여유분 확보)
+    MAX_CONTEXT_TOKENS = 150000
+    # 대략적 토큰 추정: 영어 ~4자/토큰, 한국어 ~2자/토큰 → 보수적으로 3자/토큰
+    CHARS_PER_TOKEN = 3
+
+    def _estimate_tokens(self, text: str) -> int:
+        """텍스트의 토큰 수를 대략적으로 추정"""
+        return len(text) // self.CHARS_PER_TOKEN
+
+    def _trim_messages_by_tokens(
+        self,
+        messages: list,
+        max_tokens: int | None = None,
+    ) -> list:
+        """LangChain 메시지 리스트를 토큰 한도 내로 트리밍.
+
+        첫 번째 SystemMessage(시스템 프롬프트)는 항상 유지하고,
+        나머지 메시지를 최신 순으로 채워 넣습니다.
+        """
+        if not messages:
+            return messages
+
+        max_tokens = max_tokens or self.MAX_CONTEXT_TOKENS
+        used = 0
+        system_msgs = []
+        other_msgs = []
+
+        # 시스템 메시지와 나머지 분리
+        for msg in messages:
+            content = msg.content if hasattr(msg, "content") else str(msg)
+            if isinstance(content, list):
+                # 멀티모달 content 블록
+                content = " ".join(
+                    str(b.get("text", "")) if isinstance(b, dict) else str(b)
+                    for b in content
+                )
+            if isinstance(msg, SystemMessage):
+                system_msgs.append(msg)
+                used += self._estimate_tokens(str(content))
+            else:
+                other_msgs.append((msg, self._estimate_tokens(str(content))))
+
+        # 이미 시스템 프롬프트만으로 한도 초과 시 그대로 반환 (비정상 케이스)
+        if used >= max_tokens:
+            logger.warning(
+                f"[토큰 관리] 시스템 프롬프트만으로 {used:,} 토큰 (한도: {max_tokens:,})"
+            )
+            return messages
+
+        remaining = max_tokens - used
+
+        # 최신 메시지부터 역순으로 채워 넣기
+        kept = []
+        for msg, tokens in reversed(other_msgs):
+            if remaining - tokens < 0:
+                break
+            kept.insert(0, msg)
+            remaining -= tokens
+
+        trimmed_count = len(other_msgs) - len(kept)
+        if trimmed_count > 0:
+            logger.info(
+                f"[토큰 관리] 히스토리 트리밍: {len(other_msgs)}개 → {len(kept)}개 "
+                f"(제거 {trimmed_count}개, 추정 토큰: {max_tokens - remaining:,}/{max_tokens:,})"
+            )
+
+        return system_msgs + kept
+
     async def _summarize_messages(self, messages: list[dict]) -> str:
         """오래된 메시지들을 LLM으로 요약"""
         if not messages:
@@ -861,6 +943,9 @@ class BedrockAgent:
             images=images,
         )
 
+        # 토큰 한도 초과 방지: LLM 호출 전 트리밍
+        messages = self._trim_messages_by_tokens(messages)
+
         stream_start = time.monotonic()
         first_token_time = None
         tool_call_count = 0
@@ -1001,6 +1086,9 @@ class BedrockAgent:
             current_history,
             system_prompt
         )
+
+        # 토큰 한도 초과 방지: LLM 호출 전 트리밍
+        messages = self._trim_messages_by_tokens(messages)
 
         try:
             # LangGraph 워크플로우 실행 (도구 호출 무한 반복 방지)
