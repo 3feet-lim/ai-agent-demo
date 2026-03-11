@@ -184,15 +184,21 @@ async def chat(request: ChatRequest, x_user_id: Optional[str] = Header(None)):
                         full_response.append(token)
                         yield f"data: {json.dumps({'token': token})}\n\n"
 
-                # 도구 호출 이력을 마지막에 전송 (중복 제거, 순서 유지)
+                # 도구 호출 이력을 마지막에 전송 (호출 횟수 포함, 성공한 도구만)
                 if tool_trace:
+                    from collections import Counter
+                    counts = Counter(tool_trace)
+                    # 첫 등장 순서 유지 + 횟수 표시
                     seen = set()
-                    unique_trace = []
+                    display_trace = []
                     for t in tool_trace:
                         if t not in seen:
                             seen.add(t)
-                            unique_trace.append(t)
-                    yield f"data: {json.dumps({'tool_trace': unique_trace})}\n\n"
+                            count = counts[t]
+                            display_trace.append(
+                                f"{t} (x{count})" if count > 1 else t
+                            )
+                    yield f"data: {json.dumps({'tool_trace': display_trace})}\n\n"
 
                 # 스트리밍 완료 후 메시지 저장
                 response_text = "".join(full_response)

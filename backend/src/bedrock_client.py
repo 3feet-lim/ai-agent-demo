@@ -1059,12 +1059,13 @@ class BedrockAgent:
                         result_str = str(output.content)
                     else:
                         result_str = str(output) if output else ""
-                    # 에러/빈 결과 판별
+                    # 에러 판별: 실제 도구 실행 에러만 감지
+                    # (응답 내용에 "error", "not found" 등이 포함된 정상 결과는 성공으로 처리)
                     is_error = (
                         not result_str
-                        or "error" in result_str.lower()[:100]
-                        or "not found" in result_str.lower()[:100]
                         or len(result_str.strip()) < 5
+                        or result_str.startswith("Tool execution error:")
+                        or result_str.startswith("이 명령어는 call_aws 대신")
                     )
                     yield {
                         "type": "tool_end",
