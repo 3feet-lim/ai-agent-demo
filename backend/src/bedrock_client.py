@@ -72,9 +72,10 @@ _TIME_PARAM_MAP = {
 }
 
 
-def parse_alarm_time_window(message: str, margin_minutes: int = 10):
+def parse_alarm_time_window(message: str, margin_minutes: int = 10, max_age_minutes: int = 60):
     """
     사용자 메시지에서 알람 발생 시각을 추출하고 ±margin 범위를 반환.
+    발생 시각이 현재로부터 max_age_minutes 이상 지났으면 None 반환 (최근 30분 분석으로 폴백).
     Returns: (start_utc_iso, end_utc_iso) 또는 None
     """
     m = _ALARM_TIME_PATTERN.search(message)
@@ -90,6 +91,16 @@ def parse_alarm_time_window(message: str, margin_minutes: int = 10):
         dt = dt.astimezone(timezone.utc)
     else:
         dt = dt.replace(tzinfo=timezone.utc)
+
+    # 발생 시각이 너무 오래되었으면 시간 강제 건너뜀
+    now_utc = datetime.now(timezone.utc)
+    age = now_utc - dt
+    if age > timedelta(minutes=max_age_minutes):
+        logger.info(
+            f"[시간 강제 건너뜀] 알람 발생 시각이 {age.total_seconds() / 3600:.1f}시간 전 "
+            f"(한도: {max_age_minutes}분). 최근 30분 분석으로 폴백합니다."
+        )
+        return None
 
     start = dt - timedelta(minutes=margin_minutes)
     end = dt + timedelta(minutes=margin_minutes)
