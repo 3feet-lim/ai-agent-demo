@@ -15,6 +15,8 @@ class Settings(BaseSettings):
 
     # Bedrock 모델 설정
     bedrock_model_id: str = "anthropic.claude-sonnet-4-5-v2:0"
+    # Sub-agent용 모델 (데이터 수집용, 미설정 시 bedrock_model_id 사용)
+    bedrock_sub_agent_model_id: str | None = None
 
     # 애플리케이션 설정
     log_level: str = "INFO"
