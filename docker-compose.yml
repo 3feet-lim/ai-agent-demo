@@ -130,8 +130,8 @@ services:
       dockerfile: Dockerfile
     container_name: ai-agent-backend
     hostname: backend
-    expose:
-      - "8000"
+    ports:
+      - "8000:8000"
     env_file:
       - .env
     environment:

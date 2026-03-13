@@ -2,10 +2,70 @@
 Prometheus Alertmanager Webhook → Agent 분석 → Slack 전송 핸들러
 """
 import httpx
+import re
 from loguru import logger
 from typing import Optional
 
 from .config import get_settings
+
+
+def convert_markdown_to_slack_mrkdwn(text: str) -> str:
+    """
+    표준 마크다운을 Slack mrkdwn 포맷으로 변환.
+
+    변환 규칙:
+    - ## 헤더 → *헤더* (볼드)
+    - **볼드** → *볼드*
+    - [text](url) → <url|text>
+    - 마크다운 테이블 → 정렬된 텍스트 리스트
+    """
+    lines = text.split("\n")
+    result = []
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+
+        # 마크다운 테이블 감지 및 변환
+        if "|" in line and i + 1 < len(lines) and re.match(r"^\s*\|[\s\-:|]+\|", lines[i + 1]):
+            # 헤더 행 파싱
+            headers = [h.strip() for h in line.strip().strip("|").split("|")]
+            i += 2  # 헤더 + 구분선 건너뜀
+
+            # 데이터 행 파싱
+            rows = []
+            while i < len(lines) and "|" in lines[i] and lines[i].strip().startswith("|"):
+                cols = [c.strip() for c in lines[i].strip().strip("|").split("|")]
+                rows.append(cols)
+                i += 1
+
+            # 테이블 → bullet list 변환
+            for row in rows:
+                parts = []
+                for h, v in zip(headers, row):
+                    if v:
+                        parts.append(f"{h}: {v}")
+                if parts:
+                    result.append("• " + " | ".join(parts))
+            continue
+
+        # ## 헤더 → *헤더*
+        header_match = re.match(r"^(#{1,6})\s+(.+)$", line)
+        if header_match:
+            result.append(f"\n*{header_match.group(2)}*")
+            i += 1
+            continue
+
+        # **볼드** → *볼드*
+        line = re.sub(r"\*\*(.+?)\*\*", r"*\1*", line)
+
+        # [text](url) → <url|text>
+        line = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"<\2|\1>", line)
+
+        result.append(line)
+        i += 1
+
+    return "\n".join(result)
 
 
 def format_alertmanager_payload(payload: dict) -> str:
@@ -96,7 +156,10 @@ async def send_to_slack(
         logger.error("[Slack] webhook URL이 설정되지 않았습니다.")
         return False
 
-    payload = {"text": text}
+    # 표준 마크다운 → Slack mrkdwn 변환
+    slack_text = convert_markdown_to_slack_mrkdwn(text)
+
+    payload = {"text": slack_text}
     if channel or settings.slack_channel:
         payload["channel"] = channel or settings.slack_channel
 
