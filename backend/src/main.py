@@ -18,7 +18,10 @@ from .config import get_settings
 from .bedrock_client import get_bedrock_agent
 from .conversation_store import get_conversation_store
 from .mcp_manager import get_mcp_manager
-from .webhook_handler import format_alertmanager_payload, send_to_slack
+from .webhook_handler import (
+    format_alertmanager_payload, send_to_slack,
+    is_duplicate_alert, mark_alert_processed,
+)
 
 # loguru 설정
 settings = get_settings()
@@ -52,6 +55,8 @@ async def lifespan(app: FastAPI):
     
     logger.info(f"Using Bedrock model: {settings.bedrock_model_id}")
     logger.info(f"AWS Region: {settings.aws_region}")
+    if not settings.slack_webhook_url:
+        logger.warning("[Slack] SLACK_WEBHOOK_URL이 설정되지 않았습니다. Webhook 알람 분석 결과가 Slack으로 전송되지 않습니다.")
     yield
     # 종료 시 정리
     logger.info("Shutting down Olly Agent...")
@@ -292,10 +297,15 @@ async def alertmanager_webhook(request: Request):
         logger.info(f"[Webhook] Alertmanager 알람 수신: status={payload.get('status')}, "
                      f"alerts={len(payload.get('alerts', []))}건")
 
-        # firing 상태만 분석 (resolved는 무시)
+        # resolved 상태는 분석 건너뜀
         if payload.get("status") == "resolved":
             logger.info("[Webhook] resolved 알람 → 분석 건너뜀")
             return {"status": "skipped", "reason": "resolved"}
+
+        # 중복 알람 체크 (1시간 이내 동일 알람 스킵)
+        if is_duplicate_alert(payload):
+            logger.info("[Webhook] 중복 알람 → 분석 건너뜀")
+            return {"status": "skipped", "reason": "duplicate"}
 
         # payload를 에이전트가 이해할 수 있는 텍스트로 변환
         alert_message = format_alertmanager_payload(payload)
@@ -305,6 +315,9 @@ async def alertmanager_webhook(request: Request):
         agent = await get_bedrock_agent()
         analysis = await agent.chat(alert_message)
         logger.info(f"[Webhook] 분석 완료: {len(analysis)}자")
+
+        # 분석 완료 후 캐시에 기록 (이후 동일 알람 중복 방지)
+        mark_alert_processed(payload)
 
         # Slack으로 전송
         slack_sent = await send_to_slack(analysis)

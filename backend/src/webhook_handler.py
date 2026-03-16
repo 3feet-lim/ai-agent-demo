@@ -3,10 +3,74 @@ Prometheus Alertmanager Webhook → Agent 분석 → Slack 전송 핸들러
 """
 import httpx
 import re
+import time
 from loguru import logger
 from typing import Optional
 
 from .config import get_settings
+
+
+# ── 중복 알람 억제 (deduplication) ──────────────────────────────
+
+# {alert_key: last_processed_timestamp}
+_alert_dedup_cache: dict[str, float] = {}
+# 같은 알람을 다시 분석하지 않는 최소 간격 (초)
+ALERT_DEDUP_INTERVAL = 3600  # 1시간
+
+
+def _make_alert_key(alert: dict) -> str:
+    """알람에서 고유 키 생성 (alertname + 주요 리소스 식별자)"""
+    labels = alert.get("labels", {})
+    parts = [labels.get("alertname", "unknown")]
+    # 리소스 식별에 사용되는 주요 라벨들
+    for key in ("dimension_InstanceId", "instance_id", "namespace",
+                "pod", "function_name", "db_instance_identifier",
+                "target_group_arn", "cluster_name"):
+        if labels.get(key):
+            parts.append(f"{key}={labels[key]}")
+    # account + region 구분
+    if labels.get("account_id"):
+        parts.append(f"account={labels['account_id']}")
+    if labels.get("region"):
+        parts.append(f"region={labels['region']}")
+    return "|".join(parts)
+
+
+def is_duplicate_alert(payload: dict) -> bool:
+    """중복 알람인지 확인. 중복이면 True 반환."""
+    now = time.time()
+    # 오래된 캐시 정리 (2배 간격 이상 지난 항목 제거)
+    expired = [k for k, t in _alert_dedup_cache.items()
+               if now - t > ALERT_DEDUP_INTERVAL * 2]
+    for k in expired:
+        del _alert_dedup_cache[k]
+
+    alerts = payload.get("alerts", [])
+    if not alerts:
+        return False
+
+    # 모든 알람이 중복인 경우에만 True
+    all_duplicate = True
+    for alert in alerts:
+        key = _make_alert_key(alert)
+        last_time = _alert_dedup_cache.get(key)
+        if last_time and (now - last_time) < ALERT_DEDUP_INTERVAL:
+            logger.info(
+                f"[Webhook] 중복 알람 스킵: {key} "
+                f"(마지막 분석: {int(now - last_time)}초 전, 간격: {ALERT_DEDUP_INTERVAL}초)"
+            )
+        else:
+            all_duplicate = False
+
+    return all_duplicate
+
+
+def mark_alert_processed(payload: dict):
+    """알람을 처리 완료로 기록"""
+    now = time.time()
+    for alert in payload.get("alerts", []):
+        key = _make_alert_key(alert)
+        _alert_dedup_cache[key] = now
 
 
 def convert_markdown_to_slack_mrkdwn(text: str) -> str:
