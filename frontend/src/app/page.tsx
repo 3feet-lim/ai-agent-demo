@@ -319,7 +319,7 @@ export default function Home() {
           <span className="model-badge">Claude Sonnet 4.5</span>
         </header>
         <ErrorBoundary>
-          <ChatArea messages={messages} isLoading={isLoading} />
+          <ChatArea messages={messages} isLoading={isLoading} isStreaming={isStreaming} />
         </ErrorBoundary>
         <MessageInput onSend={handleSend} disabled={isLoading || isStreaming} />
       </main>

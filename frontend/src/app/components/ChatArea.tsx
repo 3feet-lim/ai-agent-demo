@@ -48,6 +48,7 @@ interface Message {
 interface ChatAreaProps {
   messages: Message[];
   isLoading: boolean;
+  isStreaming?: boolean;
 }
 
 // 화이트 톤에 맞춘 코드 블록 커스텀 스타일
@@ -108,53 +109,91 @@ function detectLanguage(code: string): string {
  * 마크다운 전처리: 깨진 테이블/헤딩 보정
  * - 헤딩(##) 앞에 개행이 없으면 추가
  * - 테이블 행이 한 줄로 이어진 경우 줄바꿈 삽입
- *   예: "| a | b || c | d |" → "| a | b |\n| c | d |"
+ * - 테이블 구분선이 없으면 자동 삽입
+ * - 스트리밍 중 불완전한 테이블은 코드블록으로 임시 보호
  */
-function preprocessMarkdown(content: string): string {
+function preprocessMarkdown(content: string, isStreaming?: boolean): string {
   let result = content;
 
   // 헤딩 앞에 개행 보정
   result = result.replace(/([^\n])(#{1,6}\s)/g, "$1\n\n$2");
 
   // 테이블 행이 || 로 이어진 경우 줄바꿈 삽입
-  // "| ... || ..." 패턴을 "| ...\n| ..." 로 변환
   result = result.replace(/\|\s*\|\s*(?=\d+\s*\||\w)/g, "|\n| ");
 
-  // 테이블 구분선이 없는 경우 보정: 헤더 행 다음에 구분선 삽입
-  // 이미 구분선이 있으면 건드리지 않음
   const lines = result.split("\n");
   const processed: string[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    processed.push(lines[i]);
-    // 현재 줄이 테이블 행이고, 다음 줄도 테이블 행인데 구분선(---)이 아닌 경우
-    if (
-      i === 0 ||
-      !lines[i].trim().startsWith("|") ||
-      !lines[i].trim().endsWith("|")
-    ) continue;
 
-    const nextLine = lines[i + 1]?.trim() || "";
-    const prevLine = lines[i - 1]?.trim() || "";
+  // 테이블 블록을 감지하여 처리
+  let tableBlock: string[] = [];
+  let inTable = false;
 
-    // 이전 줄이 테이블이 아니고, 다음 줄이 테이블인데 구분선이 아닌 경우 → 구분선 삽입
-    if (
-      !prevLine.startsWith("|") &&
-      nextLine.startsWith("|") &&
-      !nextLine.includes("---")
-    ) {
-      // 컬럼 수에 맞게 구분선 생성
-      const cols = lines[i].split("|").length - 2;
+  const flushTable = () => {
+    if (tableBlock.length === 0) return;
+
+    // 구분선이 있는지 확인
+    const hasSeparator = tableBlock.some((l) => /^\|[\s\-:|]+\|$/.test(l.trim()));
+
+    // 구분선이 없으면 첫 번째 행 뒤에 삽입
+    if (!hasSeparator && tableBlock.length >= 2) {
+      const headerRow = tableBlock[0];
+      const cols = headerRow.split("|").filter((_, idx, arr) => idx > 0 && idx < arr.length - 1).length;
       if (cols > 0) {
         const separator = "|" + " --- |".repeat(cols);
-        processed.push(separator);
+        tableBlock.splice(1, 0, separator);
+      }
+    } else if (!hasSeparator && tableBlock.length === 1) {
+      // 헤더만 있고 구분선/데이터 없음 → 스트리밍 중 불완전
+      if (isStreaming) {
+        // 스트리밍 중이면 테이블 raw 텍스트 그대로 출력 (파싱 시도 안 함)
+        processed.push(...tableBlock);
+        tableBlock = [];
+        return;
       }
     }
+
+    processed.push(...tableBlock);
+    tableBlock = [];
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    const isTableRow = trimmed.startsWith("|") && trimmed.endsWith("|") && trimmed.length > 1;
+
+    if (isTableRow) {
+      if (!inTable) inTable = true;
+      tableBlock.push(lines[i]);
+    } else {
+      if (inTable) {
+        // 스트리밍 중이고 마지막 줄이 불완전한 테이블 행일 수 있음
+        if (isStreaming && i === lines.length - 1 && trimmed.startsWith("|") && !trimmed.endsWith("|")) {
+          tableBlock.push(lines[i]);
+          flushTable();
+        } else {
+          flushTable();
+          processed.push(lines[i]);
+        }
+        inTable = false;
+      } else {
+        // 스트리밍 중 불완전한 테이블 행 (| 로 시작하지만 | 로 안 끝남)
+        if (isStreaming && trimmed.startsWith("|") && !trimmed.endsWith("|")) {
+          processed.push(lines[i]);
+        } else {
+          processed.push(lines[i]);
+        }
+      }
+    }
+  }
+
+  // 남은 테이블 블록 처리
+  if (tableBlock.length > 0) {
+    flushTable();
   }
 
   return processed.join("\n");
 }
 
-export default function ChatArea({ messages, isLoading }: ChatAreaProps) {
+export default function ChatArea({ messages, isLoading, isStreaming }: ChatAreaProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   // 새 메시지 시 스크롤 하단 이동
@@ -258,7 +297,7 @@ export default function ChatArea({ messages, isLoading }: ChatAreaProps) {
                 },
               }}
             >
-              {preprocessMarkdown(msg.content)}
+              {preprocessMarkdown(msg.content, isStreaming && idx === messages.length - 1)}
             </Markdown>
             {/* 도구 호출 이력 표시 */}
             {msg.role === "assistant" && msg.toolTrace && msg.toolTrace.length > 0 && (
