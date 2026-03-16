@@ -388,7 +388,7 @@ def _build_metric_agent_prompt() -> str:
         "• If no data found, state clearly what you tried and that no data was available.",
         "",
         "## Rules",
-        "- Max 15 tool calls. Be efficient.",
+        "- Max 20 tool calls. Be efficient.",
         "- ===STATS=== counts are code-computed and 100% accurate. Copy them as-is.",
     ])
 
@@ -431,7 +431,7 @@ def _build_log_agent_prompt() -> str:
         "• If no data found, list every log group you checked.",
         "",
         "## Rules",
-        "- Max 15 tool calls. Be efficient.",
+        "- Max 20 tool calls. Be efficient.",
         "- NEVER conclude '로그 없음' until you've checked ALL relevant log groups.",
     ])
 
@@ -577,36 +577,48 @@ async def _run_sub_agent(
     system_prompt: str,
     task: str,
     recursion_limit: int = 20,
-) -> str:
-    """Sub-agent를 실행하고 최종 텍스트 응답을 반환"""
+) -> tuple[str, int]:
+    """Sub-agent를 실행하고 (최종 응답, 도구 호출 수) 튜플을 반환"""
     messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content=task),
     ]
+    tool_call_count = 0
     try:
         result = await graph.ainvoke(
             {"messages": messages},
             {"recursion_limit": recursion_limit},
         )
+        # 도구 호출 수 = ToolMessage 개수
+        for m in result["messages"]:
+            if isinstance(m, ToolMessage):
+                tool_call_count += 1
         ai_messages = [m for m in result["messages"] if isinstance(m, AIMessage)]
         if ai_messages:
             last = ai_messages[-1]
             if isinstance(last.content, str):
-                return last.content
+                return last.content, tool_call_count
             elif isinstance(last.content, list):
                 texts = [c.get("text", "") for c in last.content if isinstance(c, dict) and "text" in c]
-                return "\n".join(texts) if texts else str(last.content)
-            return str(last.content)
-        return "Sub-agent가 응답을 생성하지 못했습니다."
+                return ("\n".join(texts) if texts else str(last.content)), tool_call_count
+            return str(last.content), tool_call_count
+        return "Sub-agent가 응답을 생성하지 못했습니다.", tool_call_count
     except GraphRecursionError:
-        logger.warning("[Sub-Agent] 도구 호출 횟수 제한 도달")
-        try:
-            ai_msgs = [m for m in result["messages"] if isinstance(m, AIMessage)]
-            if ai_msgs and isinstance(ai_msgs[-1].content, str) and ai_msgs[-1].content.strip():
-                return ai_msgs[-1].content + "\n\n⚠️ 도구 호출 제한에 도달하여 수집을 중단했습니다."
-        except Exception:
-            pass
-        return "⚠️ 도구 호출 제한에 도달하여 수집을 중단했습니다."
+        logger.warning(f"[Sub-Agent] 도구 호출 횟수 제한 도달 (limit={recursion_limit})")
+        if result:
+            for m in result["messages"]:
+                if isinstance(m, ToolMessage):
+                    tool_call_count += 1
+            try:
+                ai_msgs = [m for m in result["messages"] if isinstance(m, AIMessage)]
+                if ai_msgs and isinstance(ai_msgs[-1].content, str) and ai_msgs[-1].content.strip():
+                    return ai_msgs[-1].content + "\n\n⚠️ 도구 호출 제한에 도달하여 수집을 중단했습니다.", tool_call_count
+            except Exception:
+                pass
+        return "⚠️ 도구 호출 제한에 도달하여 수집을 중단했습니다.", tool_call_count
+    except Exception as e:
+        logger.error(f"[Sub-Agent] 예상치 못한 에러: {type(e).__name__}: {e}")
+        return f"Sub-agent 실행 에러: {str(e)}", tool_call_count
 
 
 # ── Sub-Agent를 Main Agent의 도구로 래핑 ──────────────────────
@@ -626,11 +638,14 @@ class SubAgentTool(BaseTool):
         """Sub-agent 실행"""
         logger.info(f"[Main→Sub] {self.name} 호출: {task[:200]}")
         start = time.monotonic()
-        result = await _run_sub_agent(
+        result, tool_count = await _run_sub_agent(
             self.graph, self.system_prompt, task, self.recursion_limit
         )
         elapsed = time.monotonic() - start
-        logger.info(f"[Main→Sub] {self.name} 완료: {elapsed:.1f}s, 응답 {len(result)}자")
+        logger.info(
+            f"[Main→Sub] {self.name} 완료: {elapsed:.1f}s, "
+            f"MCP 도구 호출 {tool_count}회, 응답 {len(result)}자"
+        )
         return result
 
     def _run(self, task: str) -> str:
@@ -847,10 +862,10 @@ class BedrockAgent:
 
         # Sub-agent 그래프 생성
         sub_configs = {
-            "metric": (_build_metric_agent_prompt, 20),
-            "log": (_build_log_agent_prompt, 20),
-            "resource": (_build_resource_agent_prompt, 20),
-            "network": (_build_network_agent_prompt, 25),
+            "metric": (_build_metric_agent_prompt, 40),
+            "log": (_build_log_agent_prompt, 40),
+            "resource": (_build_resource_agent_prompt, 30),
+            "network": (_build_network_agent_prompt, 40),
         }
 
         self._main_tools = []
