@@ -314,51 +314,37 @@ def create_mcp_tool(mcp_tool: MCPTool, mcp_manager) -> BaseTool:
 
 # MCP 서버별 도구 → sub-agent 매핑
 _TOOL_ROUTING = {
-    # Metric Agent: Grafana + CloudWatch 메트릭 도구
+    # Metric Agent: Grafana MCP 도구만 (PromQL 기반 메트릭 조회)
     "metric": {
         "servers": {"grafana"},
-        "tools": {"get_metric_data", "list_metrics", "describe_alarms"},
+        "tools": set(),
     },
-    # Log Agent: CloudWatch Logs 도구
+    # Log Agent: CloudWatch MCP 도구만 (로그 조회)
     "log": {
-        "servers": set(),
-        "tools": {
-            "list_log_groups", "describe_log_groups", "get_log_events",
-            "filter_log_events", "start_query", "get_query_results",
-            "execute_log_insights_query", "start_live_tail",
-        },
+        "servers": {"cloudwatch"},
+        "tools": set(),
     },
     # Resource Agent: AWS API MCP (리소스 상태 조회)
     "resource": {
         "servers": {"aws-api"},
-        "tools": set(),  # aws-api 서버의 모든 도구 (network 제외)
+        "tools": set(),
     },
-    # Network Agent: AWS API MCP (네트워크 전용)
+    # Network Agent: AWS API MCP (네트워크 전용, resource와 도구 공유)
     "network": {
         "servers": set(),
-        "tools": set(),  # resource agent와 같은 도구를 공유하되 프롬프트가 다름
+        "tools": set(),
     },
 }
 
 def classify_tool(mcp_tool: MCPTool) -> list[str]:
-    """MCP 도구가 어떤 sub-agent에 속하는지 분류. 복수 가능."""
-    roles = []
-    # 명시적 도구 이름 매칭
+    """MCP 도구가 어떤 sub-agent에 속하는지 분류. 서버 기반으로 1:1 매핑."""
     for role, config in _TOOL_ROUTING.items():
+        if mcp_tool.server_name in config["servers"]:
+            return [role]
         if mcp_tool.name in config["tools"]:
-            roles.append(role)
-    # 서버 기반 매칭 (명시적 매칭이 없을 때)
-    if not roles:
-        for role, config in _TOOL_ROUTING.items():
-            if mcp_tool.server_name in config["servers"]:
-                roles.append(role)
-    # aws-docs는 모든 에이전트에서 사용 가능 → resource에 포함
-    if mcp_tool.server_name == "aws-docs" and not roles:
-        roles.append("resource")
+            return [role]
     # 분류 안 된 도구는 resource에 기본 배정
-    if not roles:
-        roles.append("resource")
-    return roles
+    return ["resource"]
 
 
 # ── Sub-Agent 프롬프트 ──────────────────────────────────────────
@@ -374,23 +360,19 @@ def _build_metric_agent_prompt() -> str:
         _get_current_time_info(),
         "",
         "## Your Role",
-        "Collect metrics from Grafana (PromQL) and CloudWatch.",
+        "Collect metrics from Grafana using PromQL queries (query_prometheus).",
         "",
-        "## Priority Order (CRITICAL)",
-        "1st: Grafana MCP — Use PromQL queries directly (query_prometheus).",
-        "  → Do NOT browse dashboards. Go straight to PromQL.",
-        "  → Example: container_memory_usage_bytes{namespace='prod'} for memory,",
-        "    rate(container_cpu_usage_seconds_total[5m]) for CPU.",
-        "2nd: CloudWatch MCP (get_metric_data) — Only if Grafana has no data.",
+        "## Rules",
+        "- Use query_prometheus directly with PromQL. Do NOT browse dashboards.",
+        "- Example: aws_ec2_cpuutilization_average{dimension_InstanceId='i-xxx'}",
+        "- Use list_prometheus_metric_names to discover available metric names.",
+        "- Max 15 tool calls. Be efficient.",
+        "- ===STATS=== counts are code-computed and 100% accurate. Copy them as-is.",
         "",
         "## Output Format",
         "Return collected data as structured text:",
         "• 지표명: (값) at (시간)",
         "• If no data found, state clearly what you tried and that no data was available.",
-        "",
-        "## Rules",
-        "- Max 20 tool calls. Be efficient.",
-        "- ===STATS=== counts are code-computed and 100% accurate. Copy them as-is.",
     ])
 
 
