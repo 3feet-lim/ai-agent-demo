@@ -7,6 +7,7 @@ Main Agent (라우팅/종합/리포트) → Sub-Agents (데이터 수집)
 - Resource Agent: AWS API MCP (리소스 상태)
 - Network Agent: AWS API MCP (VPC, TGW, SG, NACL)
 """
+import asyncio
 import json
 from loguru import logger
 import re
@@ -535,26 +536,35 @@ def _build_sub_agent_graph(llm_with_tools, tools: list[BaseTool]) -> Any:
         return {"messages": [response]}
 
     async def tools_node(state: MessagesState) -> MessagesState:
+        """MCP 도구를 병렬 실행"""
         messages = state["messages"]
         last_message = messages[-1]
-        tool_messages = []
-        if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
-            for tool_call in last_message.tool_calls:
-                tool_name = tool_call["name"]
-                tool_args = tool_call["args"]
-                tool_id = tool_call["id"]
-                logger.info(f"[Sub-Agent] Executing tool: {tool_name}")
-                result = "Tool not found."
-                for tool in tools:
-                    if tool.name == tool_name:
-                        try:
-                            result = await tool.ainvoke(tool_args)
-                        except Exception as e:
-                            result = f"Tool execution error: {str(e)}"
-                            logger.error(f"[Sub-Agent] Tool error: {e}")
-                        break
-                tool_messages.append(ToolMessage(content=str(result), tool_call_id=tool_id))
-        return {"messages": tool_messages}
+        if not (hasattr(last_message, 'tool_calls') and last_message.tool_calls):
+            return {"messages": []}
+
+        # 도구 매핑 (이름 → 도구 객체)
+        tool_map = {tool.name: tool for tool in tools}
+
+        async def _execute_one(tool_call):
+            tool_name = tool_call["name"]
+            tool_args = tool_call["args"]
+            tool_id = tool_call["id"]
+            logger.info(f"[Sub-Agent] Executing tool: {tool_name}")
+            matched = tool_map.get(tool_name)
+            if not matched:
+                return ToolMessage(content="Tool not found.", tool_call_id=tool_id)
+            try:
+                result = await matched.ainvoke(tool_args)
+            except Exception as e:
+                result = f"Tool execution error: {str(e)}"
+                logger.error(f"[Sub-Agent] Tool error: {e}")
+            return ToolMessage(content=str(result), tool_call_id=tool_id)
+
+        # 모든 도구 호출을 병렬 실행
+        tool_messages = await asyncio.gather(
+            *[_execute_one(tc) for tc in last_message.tool_calls]
+        )
+        return {"messages": list(tool_messages)}
 
     def should_continue(state: MessagesState) -> str:
         messages = state["messages"]
@@ -686,7 +696,10 @@ def _build_main_agent_prompt(enforced_time_window: tuple[str, str] | None = None
         "## Workflow",
         "",
         "1. Analyze the user's question to determine what data is needed.",
-        "2. Call the appropriate sub-agent(s). You can call multiple in sequence.",
+        "2. Call the appropriate sub-agent(s). Call MULTIPLE sub-agents in a SINGLE turn",
+        "   for parallel execution — this is much faster than calling them one by one.",
+        "   Example: If you need both metrics and resource status, call collect_metrics",
+        "   AND check_resources in the same response.",
         "3. Synthesize the collected data into a comprehensive report.",
         "",
         "For general knowledge, greetings, or follow-up questions about data",
@@ -946,27 +959,35 @@ class BedrockAgent:
             return {"messages": [response]}
 
         async def tools_node(state: MessagesState) -> MessagesState:
+            """Sub-agent 호출을 병렬 실행"""
             messages = state["messages"]
             last_message = messages[-1]
-            tool_messages = []
-            if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
-                for tool_call in last_message.tool_calls:
-                    tool_name = tool_call["name"]
-                    tool_args = tool_call["args"]
-                    tool_id = tool_call["id"]
-                    logger.info(f"[Main] Dispatching to sub-agent: {tool_name}")
-                    result = "Sub-agent not found."
-                    for tool in self._main_tools:
-                        if tool.name == tool_name:
-                            try:
-                                result = await tool.ainvoke(tool_args)
-                            except Exception as e:
-                                result = f"Sub-agent error: {str(e)}"
-                                logger.error(f"[Main] Sub-agent error: {e}")
-                            break
-                    tool_messages.append(ToolMessage(
-                        content=str(result), tool_call_id=tool_id
-                    ))
+            if not (hasattr(last_message, 'tool_calls') and last_message.tool_calls):
+                return {"messages": []}
+
+            # 도구 매핑 (이름 → 도구 객체)
+            tool_map = {tool.name: tool for tool in self._main_tools}
+
+            async def _dispatch_one(tool_call):
+                tool_name = tool_call["name"]
+                tool_args = tool_call["args"]
+                tool_id = tool_call["id"]
+                logger.info(f"[Main] Dispatching to sub-agent: {tool_name}")
+                matched = tool_map.get(tool_name)
+                if not matched:
+                    return ToolMessage(content="Sub-agent not found.", tool_call_id=tool_id)
+                try:
+                    result = await matched.ainvoke(tool_args)
+                except Exception as e:
+                    result = f"Sub-agent error: {str(e)}"
+                    logger.error(f"[Main] Sub-agent error: {e}")
+                return ToolMessage(content=str(result), tool_call_id=tool_id)
+
+            # 모든 sub-agent 호출을 병렬 실행
+            tool_messages = await asyncio.gather(
+                *[_dispatch_one(tc) for tc in last_message.tool_calls]
+            )
+            return {"messages": list(tool_messages)}
             return {"messages": tool_messages}
 
         def should_continue(state: MessagesState) -> str:
