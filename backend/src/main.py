@@ -21,6 +21,7 @@ from .mcp_manager import get_mcp_manager
 from .webhook_handler import (
     format_alertmanager_payload, send_to_slack,
     is_duplicate_alert, mark_alert_processed,
+    _get_alert_queue, start_alert_workers, stop_alert_workers,
 )
 
 # loguru 설정
@@ -57,9 +58,16 @@ async def lifespan(app: FastAPI):
     logger.info(f"AWS Region: {settings.aws_region}")
     if not settings.slack_webhook_url:
         logger.warning("[Slack] SLACK_WEBHOOK_URL이 설정되지 않았습니다. Webhook 알람 분석 결과가 Slack으로 전송되지 않습니다.")
+
+    # 알람 분석 워커 시작 (동시 3개)
+    start_alert_workers()
+
     yield
     # 종료 시 정리
     logger.info("Shutting down Olly Agent...")
+
+    # 알람 분석 워커 종료
+    await stop_alert_workers()
     # 아직 MCP 초기화 중이면 완료 대기
     if not mcp_task.done():
         mcp_task.cancel()
@@ -311,21 +319,14 @@ async def alertmanager_webhook(request: Request):
         alert_message = format_alertmanager_payload(payload)
         logger.info(f"[Webhook] 변환된 알람 메시지:\n{alert_message[:500]}")
 
-        # 에이전트로 분석 요청 (비스트리밍)
-        agent = await get_bedrock_agent()
-        analysis = await agent.chat(alert_message)
-        logger.info(f"[Webhook] 분석 완료: {len(analysis)}자")
-
-        # 분석 완료 후 캐시에 기록 (이후 동일 알람 중복 방지)
-        mark_alert_processed(payload)
-
-        # Slack으로 전송
-        slack_sent = await send_to_slack(analysis)
+        # 큐에 넣고 즉시 응답 (백그라운드 워커가 처리)
+        queue = _get_alert_queue()
+        await queue.put((alert_message, payload))
+        logger.info(f"[Webhook] 분석 큐에 추가 (대기 중: {queue.qsize()}건)")
 
         return {
-            "status": "processed",
-            "analysis_length": len(analysis),
-            "slack_sent": slack_sent,
+            "status": "queued",
+            "queue_size": queue.qsize(),
         }
 
     except Exception as e:

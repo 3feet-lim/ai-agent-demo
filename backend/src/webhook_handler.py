@@ -1,6 +1,7 @@
 """
 Prometheus Alertmanager Webhook → Agent 분석 → Slack 전송 핸들러
 """
+import asyncio
 import httpx
 import re
 import time
@@ -8,6 +9,93 @@ from loguru import logger
 from typing import Optional
 
 from .config import get_settings
+
+
+# ── 알람 분석 큐 (동시 3개 처리, 누락 없음) ──────────────────
+
+# 동시에 실행 가능한 알람 분석 최대 수
+ANALYSIS_CONCURRENCY_LIMIT = 3
+
+_alert_queue: asyncio.Queue | None = None
+_worker_tasks: list[asyncio.Task] = []
+
+
+def _get_alert_queue() -> asyncio.Queue:
+    """알람 큐 싱글톤"""
+    global _alert_queue
+    if _alert_queue is None:
+        _alert_queue = asyncio.Queue()
+    return _alert_queue
+
+
+async def _alert_worker(worker_id: int):
+    """알람 분석 워커. 큐에서 작업을 꺼내 순차 처리."""
+    # 순환 import 방지를 위해 함수 내부에서 import
+    from .bedrock_client import get_bedrock_agent
+
+    queue = _get_alert_queue()
+    logger.info(f"[Queue] 워커 #{worker_id} 시작")
+
+    while True:
+        try:
+            item = await queue.get()
+            if item is None:
+                # 종료 신호
+                queue.task_done()
+                break
+
+            alert_message, payload = item
+            logger.info(
+                f"[Queue] 워커 #{worker_id} 분석 시작 "
+                f"(대기 중: {queue.qsize()}건)"
+            )
+
+            try:
+                agent = await get_bedrock_agent()
+                analysis = await agent.chat(alert_message)
+                logger.info(f"[Queue] 워커 #{worker_id} 분석 완료: {len(analysis)}자")
+
+                # 분석 완료 후 캐시에 기록
+                mark_alert_processed(payload)
+
+                # Slack으로 전송
+                await send_to_slack(analysis)
+
+            except Exception as e:
+                logger.error(f"[Queue] 워커 #{worker_id} 분석 실패: {e}")
+
+            queue.task_done()
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"[Queue] 워커 #{worker_id} 예상치 못한 에러: {e}")
+
+
+def start_alert_workers():
+    """알람 분석 워커 시작 (lifespan에서 호출)"""
+    global _worker_tasks
+    for i in range(ANALYSIS_CONCURRENCY_LIMIT):
+        task = asyncio.create_task(_alert_worker(i))
+        _worker_tasks.append(task)
+    logger.info(f"[Queue] 알람 분석 워커 {ANALYSIS_CONCURRENCY_LIMIT}개 시작")
+
+
+async def stop_alert_workers():
+    """알람 분석 워커 종료 (lifespan에서 호출)"""
+    queue = _get_alert_queue()
+    # 종료 신호 전송
+    for _ in _worker_tasks:
+        await queue.put(None)
+    # 워커 종료 대기
+    for task in _worker_tasks:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    _worker_tasks.clear()
+    logger.info("[Queue] 알람 분석 워커 종료")
 
 
 # ── 중복 알람 억제 (deduplication) ──────────────────────────────
