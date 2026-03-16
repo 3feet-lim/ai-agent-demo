@@ -1181,13 +1181,15 @@ class BedrockAgent:
         """스트리밍 대화 처리"""
         await self._ensure_initialized()
         history = history or []
+        # 로그 prefix (conversation_id 앞 8자)
+        cid = (conversation_id or "no-conv")[:8]
 
         time_window = parse_alarm_time_window(message)
         if time_window:
             tz_match = _ALARM_TIME_PATTERN.search(message)
             original_tz = tz_match.group(3) if tz_match and tz_match.group(3) else "UTC"
             original_time = f"{tz_match.group(1)} {tz_match.group(2)}" if tz_match else "?"
-            logger.info(f"[시간 강제] 알람 시각: {original_time} {original_tz} → {time_window}")
+            logger.info(f"[{cid}] [시간 강제] 알람 시각: {original_time} {original_tz} → {time_window}")
 
         self._prepare_tools_for_request(message, time_window)
 
@@ -1219,7 +1221,7 @@ class BedrockAgent:
                 if kind == "on_tool_start":
                     tool_call_count += 1
                     tool_name = event.get("name", "unknown")
-                    logger.info(f"[성능] Sub-agent 호출 #{tool_call_count}: {tool_name} "
+                    logger.info(f"[{cid}] Sub-agent 호출 #{tool_call_count}: {tool_name} "
                                 f"(경과: {time.monotonic() - stream_start:.1f}s)")
                     yield {"type": "tool_start", "name": tool_name,
                            "args": event.get("data", {}).get("input", {})}
@@ -1245,7 +1247,7 @@ class BedrockAgent:
                         if isinstance(content, str) and content:
                             if first_token_time is None:
                                 first_token_time = time.monotonic()
-                                logger.info(f"[성능] 첫 토큰: {first_token_time - stream_start:.1f}s")
+                                logger.info(f"[{cid}] 첫 토큰: {first_token_time - stream_start:.1f}s")
                             yield {"type": "token", "content": content}
                         elif isinstance(content, list):
                             for block in content:
@@ -1257,10 +1259,10 @@ class BedrockAgent:
                                         yield {"type": "token", "content": text}
 
             total_time = time.monotonic() - stream_start
-            logger.info(f"[성능] 완료: {total_time:.1f}s, sub-agent 호출 {tool_call_count}회")
+            logger.info(f"[{cid}] 완료: {total_time:.1f}s, sub-agent 호출 {tool_call_count}회")
 
         except GraphRecursionError:
-            logger.warning("Main agent 도구 호출 제한 도달")
+            logger.warning(f"[{cid}] Main agent 도구 호출 제한 도달")
             yield {
                 "type": "token",
                 "content": (
@@ -1271,7 +1273,7 @@ class BedrockAgent:
                 ),
             }
         except Exception as e:
-            logger.error(f"Error during chat_stream: {e}")
+            logger.error(f"[{cid}] Error during chat_stream: {e}")
             raise
 
     async def chat(
