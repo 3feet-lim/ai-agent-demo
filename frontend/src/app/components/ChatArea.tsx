@@ -120,8 +120,8 @@ function preprocessMarkdown(content: string, isStreaming?: boolean): string {
 
   let result = content;
 
-  // 헤딩 앞에 개행 보정
-  result = result.replace(/([^\n])(#{1,6}\s)/g, "$1\n\n$2");
+  // 헤딩 앞에 개행 보정 (테이블 셀 안의 # 은 제외: | # | 패턴)
+  result = result.replace(/([^\n|])(#{1,6}\s)/g, "$1\n\n$2");
 
   const lines = result.split("\n");
   const processed: string[] = [];
