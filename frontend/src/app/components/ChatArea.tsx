@@ -118,9 +118,6 @@ function preprocessMarkdown(content: string, isStreaming?: boolean): string {
   // 헤딩 앞에 개행 보정
   result = result.replace(/([^\n])(#{1,6}\s)/g, "$1\n\n$2");
 
-  // 테이블 행이 || 로 이어진 경우 줄바꿈 삽입
-  result = result.replace(/\|\s*\|\s*(?=\d+\s*\||\w)/g, "|\n| ");
-
   const lines = result.split("\n");
   const processed: string[] = [];
 
@@ -128,28 +125,31 @@ function preprocessMarkdown(content: string, isStreaming?: boolean): string {
   let tableBlock: string[] = [];
   let inTable = false;
 
+  // 구분선 판별: | 와 -, :, 공백만으로 구성된 행
+  const isSeparatorRow = (line: string) => {
+    const t = line.trim();
+    // | --- | --- | 또는 |---|---| 또는 | :---: | 등
+    return /^\|[-\s:|]+\|$/.test(t) && t.includes("-");
+  };
+
   const flushTable = () => {
     if (tableBlock.length === 0) return;
 
-    // 구분선이 있는지 확인
-    const hasSeparator = tableBlock.some((l) => /^\|[\s\-:|]+\|$/.test(l.trim()));
+    const hasSeparator = tableBlock.some((l) => isSeparatorRow(l));
 
-    // 구분선이 없으면 첫 번째 행 뒤에 삽입
     if (!hasSeparator && tableBlock.length >= 2) {
-      const headerRow = tableBlock[0];
+      // 구분선이 없으면 첫 번째 행 뒤에 자동 삽입
+      const headerRow = tableBlock[0].trim();
       const cols = headerRow.split("|").filter((_, idx, arr) => idx > 0 && idx < arr.length - 1).length;
       if (cols > 0) {
         const separator = "|" + " --- |".repeat(cols);
         tableBlock.splice(1, 0, separator);
       }
-    } else if (!hasSeparator && tableBlock.length === 1) {
-      // 헤더만 있고 구분선/데이터 없음 → 스트리밍 중 불완전
-      if (isStreaming) {
-        // 스트리밍 중이면 테이블 raw 텍스트 그대로 출력 (파싱 시도 안 함)
-        processed.push(...tableBlock);
-        tableBlock = [];
-        return;
-      }
+    } else if (!hasSeparator && tableBlock.length === 1 && isStreaming) {
+      // 스트리밍 중 헤더만 도착 → raw 텍스트 그대로 출력
+      processed.push(...tableBlock);
+      tableBlock = [];
+      return;
     }
 
     processed.push(...tableBlock);
@@ -165,22 +165,16 @@ function preprocessMarkdown(content: string, isStreaming?: boolean): string {
       tableBlock.push(lines[i]);
     } else {
       if (inTable) {
-        // 스트리밍 중이고 마지막 줄이 불완전한 테이블 행일 수 있음
-        if (isStreaming && i === lines.length - 1 && trimmed.startsWith("|") && !trimmed.endsWith("|")) {
-          tableBlock.push(lines[i]);
-          flushTable();
-        } else {
-          flushTable();
-          processed.push(lines[i]);
-        }
+        flushTable();
         inTable = false;
-      } else {
-        // 스트리밍 중 불완전한 테이블 행 (| 로 시작하지만 | 로 안 끝남)
+        // 스트리밍 중 불완전한 행 (| 로 시작하지만 | 로 안 끝남) → 버퍼에 안 넣고 그대로 출력
         if (isStreaming && trimmed.startsWith("|") && !trimmed.endsWith("|")) {
           processed.push(lines[i]);
         } else {
           processed.push(lines[i]);
         }
+      } else {
+        processed.push(lines[i]);
       }
     }
   }
