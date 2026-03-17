@@ -113,6 +113,11 @@ function detectLanguage(code: string): string {
  * - 스트리밍 중 불완전한 테이블은 코드블록으로 임시 보호
  */
 function preprocessMarkdown(content: string, isStreaming?: boolean): string {
+  // 디버그: 테이블이 포함된 원문 확인 (배포 전 제거)
+  if (content.includes("|") && !isStreaming) {
+    console.log("[MD-DEBUG] 원문:\n", JSON.stringify(content));
+  }
+
   let result = content;
 
   // 헤딩 앞에 개행 보정
@@ -128,8 +133,19 @@ function preprocessMarkdown(content: string, isStreaming?: boolean): string {
   // 구분선 판별: | 와 -, :, 공백만으로 구성된 행
   const isSeparatorRow = (line: string) => {
     const t = line.trim();
-    // | --- | --- | 또는 |---|---| 또는 | :---: | 등
     return /^\|[-\s:|]+\|$/.test(t) && t.includes("-");
+  };
+
+  // 단독 파이프 행 판별: "|" 만 있거나 "| |" 같은 빈 행
+  const isEmptyPipeRow = (line: string) => {
+    const t = line.trim();
+    return t === "|" || /^\|\s*\|$/.test(t);
+  };
+
+  // 실제 데이터가 있는 테이블 행 판별
+  const isTableRow = (line: string) => {
+    const t = line.trim();
+    return t.startsWith("|") && t.endsWith("|") && t.length > 1 && !isEmptyPipeRow(line);
   };
 
   const flushTable = () => {
@@ -152,30 +168,38 @@ function preprocessMarkdown(content: string, isStreaming?: boolean): string {
       return;
     }
 
+    // 테이블 앞에 빈 줄이 없으면 추가 (remarkGfm 파싱 요구사항)
+    const lastProcessed = processed[processed.length - 1];
+    if (lastProcessed !== undefined && lastProcessed.trim() !== "") {
+      processed.push("");
+    }
+
     processed.push(...tableBlock);
     tableBlock = [];
   };
 
   for (let i = 0; i < lines.length; i++) {
     const trimmed = lines[i].trim();
-    const isTableRow = trimmed.startsWith("|") && trimmed.endsWith("|") && trimmed.length > 1;
 
-    if (isTableRow) {
+    // 단독 파이프 행은 테이블 블록에 넣지 않고 빈 줄로 변환
+    if (isEmptyPipeRow(lines[i])) {
+      if (inTable) {
+        flushTable();
+        inTable = false;
+      }
+      processed.push("");
+      continue;
+    }
+
+    if (isTableRow(lines[i])) {
       if (!inTable) inTable = true;
       tableBlock.push(lines[i]);
     } else {
       if (inTable) {
         flushTable();
         inTable = false;
-        // 스트리밍 중 불완전한 행 (| 로 시작하지만 | 로 안 끝남) → 버퍼에 안 넣고 그대로 출력
-        if (isStreaming && trimmed.startsWith("|") && !trimmed.endsWith("|")) {
-          processed.push(lines[i]);
-        } else {
-          processed.push(lines[i]);
-        }
-      } else {
-        processed.push(lines[i]);
       }
+      processed.push(lines[i]);
     }
   }
 
@@ -184,7 +208,13 @@ function preprocessMarkdown(content: string, isStreaming?: boolean): string {
     flushTable();
   }
 
-  return processed.join("\n");
+  // 디버그: 처리 후 결과 확인 (배포 전 제거)
+  const output = processed.join("\n");
+  if (output.includes("|") && !isStreaming) {
+    console.log("[MD-DEBUG] 처리 후:\n", JSON.stringify(output));
+  }
+
+  return output;
 }
 
 export default function ChatArea({ messages, isLoading, isStreaming }: ChatAreaProps) {
