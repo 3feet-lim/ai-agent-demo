@@ -113,11 +113,6 @@ function detectLanguage(code: string): string {
  * - 스트리밍 중 불완전한 테이블은 코드블록으로 임시 보호
  */
 function preprocessMarkdown(content: string, isStreaming?: boolean): string {
-  // 디버그: 테이블이 포함된 원문 확인 (배포 전 제거)
-  if (content.includes("|") && !isStreaming) {
-    console.log("[MD-DEBUG] 원문:\n", JSON.stringify(content));
-  }
-
   let result = content;
 
   // 헤딩 앞에 개행 보정
@@ -219,13 +214,7 @@ function preprocessMarkdown(content: string, isStreaming?: boolean): string {
     flushTable();
   }
 
-  // 디버그: 처리 후 결과 확인 (배포 전 제거)
-  const output = processed.join("\n");
-  if (output.includes("|") && !isStreaming) {
-    console.log("[MD-DEBUG] 처리 후:\n", JSON.stringify(output));
-  }
-
-  return output;
+  return processed.join("\n");
 }
 
 export default function ChatArea({ messages, isLoading, isStreaming }: ChatAreaProps) {
