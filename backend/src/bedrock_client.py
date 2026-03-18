@@ -363,7 +363,7 @@ def _build_metric_agent_prompt() -> str:
         "## Rules",
         "- query_prometheus에 PromQL을 직접 전달. 대시보드 탐색 금지.",
         "- 메트릭명 모르면 list_prometheus_metric_names로 먼저 탐색.",
-        "- 최대 15회 도구 호출. ===STATS=== 수치는 그대로 복사.",
+        "- 최대 15회 도구 호출.",
         "",
         "## Output: bullet list로 '지표명: 값 at 시간' 형태만 반환.",
     ])
@@ -402,7 +402,7 @@ def _build_resource_agent_prompt() -> str:
         "CloudTrail: lookup-events",
         "",
         "## Rules",
-        "- 최대 15회 도구 호출. ===STATS=== 수치는 그대로 복사.",
+        "- 최대 15회 도구 호출.",
         "",
         "## Output: '리소스: 이름/ID — 상태: 값' 형태만 반환.",
     ])
@@ -556,6 +556,8 @@ class SubAgentTool(BaseTool):
             self.graph, self.system_prompt, task, self.recursion_limit
         )
         elapsed = time.monotonic() - start
+        # ===STATS=== 블록 제거 (내부 메타데이터, 사용자에게 노출 불필요)
+        result = re.sub(r'===STATS===.*?===END STATS===\s*', '', result, flags=re.DOTALL)
         # Sub-agent 응답이 너무 길면 truncate (Main Agent 컨텍스트 절약)
         max_len = 8000
         if len(result) > max_len:
@@ -611,7 +613,6 @@ def _build_main_agent_prompt(enforced_time_window: tuple[str, str] | None = None
         "• 반환 금지: sub-agent 원문을 그대로 복사하지 말 것. 핵심만 요약.",
         "• 할루시네이션 금지: sub-agent 출력에 없는 데이터를 만들지 말 것.",
         "  - 확인된 사항 → '확인된 사항:', 분석 의견 → '분석 의견:', 불확실 → '확인 필요'",
-        "• ===STATS=== 수치는 코드 계산값이므로 그대로 복사. 직접 세지 말 것.",
         "• 최종 리포트는 3000자 이내로 간결하게.",
         "",
         "## Report Format",
