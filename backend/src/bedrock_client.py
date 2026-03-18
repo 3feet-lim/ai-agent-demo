@@ -1067,22 +1067,8 @@ class BedrockAgent:
                            "success": not is_error}
 
                 elif kind == "on_chat_model_stream":
-                    # Sub-agent 내부 LLM 토큰 필터링 — Main Agent 토큰만 전달
-                    # astream_events v2는 중첩 그래프 내부 이벤트도 전파함
-                    # Main Agent 레벨: langgraph_path 길이가 짧음 (최상위)
-                    # Sub-agent 레벨: tools 노드 안에서 실행되므로 path가 더 깊음
-                    metadata = event.get("metadata", {})
-                    langgraph_node = metadata.get("langgraph_node", "")
-                    # Main Agent의 "agent" 노드에서 직접 발생한 이벤트만 허용
-                    # Sub-agent 내부 이벤트는 langgraph_triggers에 "tools" 노드가 포함됨
-                    langgraph_triggers = metadata.get("langgraph_triggers", [])
-                    # Main Agent agent 노드: triggers = ["start:agent"] 또는 ["tools"]
-                    # Sub-agent 내부: 중첩되어 있으므로 checkpoint_ns가 비어있지 않음
-                    checkpoint_ns = metadata.get("checkpoint_ns", "")
-                    # 최상위 그래프(Main Agent)의 이벤트만 허용
-                    if checkpoint_ns:
-                        continue
-
+                    # TODO: sub-agent 내부 토큰 필터링 방법 확인 필요
+                    # 현재는 모든 on_chat_model_stream 이벤트를 전달
                     chunk = event.get("data", {}).get("chunk")
                     if chunk and hasattr(chunk, "content"):
                         content = chunk.content
