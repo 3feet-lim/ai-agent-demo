@@ -120,8 +120,15 @@ function preprocessMarkdown(content: string, isStreaming?: boolean): string {
 
   let result = content;
 
-  // 헤딩 앞에 개행 보정 (테이블 셀 안의 # 은 제외: | # | 패턴)
-  result = result.replace(/([^\n|])(#{1,6}\s)/g, "$1\n\n$2");
+  // 헤딩 앞에 개행 보정 (테이블 행 내부의 # 은 건드리지 않음)
+  // 줄 단위로 처리: | 로 시작하는 줄은 테이블이므로 스킵
+  const headingFixed = result.split("\n").map((line, idx, arr) => {
+    // 테이블 행이면 그대로 유지
+    if (line.trimStart().startsWith("|")) return line;
+    // 이전 줄이 있고, 줄 안에 헤딩이 이어붙어 있으면 분리
+    return line.replace(/([^\n])(#{1,6}\s)/g, "$1\n\n$2");
+  });
+  result = headingFixed.join("\n");
 
   const lines = result.split("\n");
   const processed: string[] = [];
