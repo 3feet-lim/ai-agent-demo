@@ -17,7 +17,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, Any
 
 from langchain_aws import ChatBedrock
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
+from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool
 from langgraph.graph import StateGraph, MessagesState, START, END
 from langgraph.errors import GraphRecursionError
@@ -797,13 +797,15 @@ class BedrockAgent:
                 logger.info(f"[Main] Dispatching to sub-agent: {tool_name}")
                 matched = tool_map.get(tool_name)
                 if not matched:
-                    return ToolMessage(content="Sub-agent not found.", tool_call_id=tool_id)
+                    return ToolMessage(content="Sub-agent not found.",
+                                       name=tool_name, tool_call_id=tool_id)
                 try:
                     result = await matched.ainvoke(tool_args)
                 except Exception as e:
                     result = f"Sub-agent error: {str(e)}"
                     logger.error(f"[Main] Sub-agent error: {e}")
-                return ToolMessage(content=str(result), tool_call_id=tool_id)
+                return ToolMessage(content=str(result),
+                                   name=tool_name, tool_call_id=tool_id)
 
             # 같은 sub-agent 중복 호출 방지: 동일 이름은 첫 번째만 실행
             seen_tools: dict[str, dict] = {}
@@ -827,6 +829,7 @@ class BedrockAgent:
                     tool_messages = list(tool_messages) + [
                         ToolMessage(
                             content="[중복 호출 차단] 이미 동일한 sub-agent가 실행되었습니다.",
+                            name=tc["name"],
                             tool_call_id=tc["id"],
                         )
                     ]
@@ -1057,70 +1060,41 @@ class BedrockAgent:
         stream_start = time.monotonic()
         first_token_time = None
         tool_call_count = 0
-        token_count = 0  # 사용자에게 전달된 토큰 수 추적
-        last_tool_end_time = None  # 마지막 tool_end 시각
-        stream_debug_count = 0  # 디버그 로깅 카운터
+        token_count = 0
+        active_tools: set[str] = set()  # 현재 실행 중인 sub-agent 추적
 
         try:
-            async for event in self._main_graph.astream_events(
+            async for msg, metadata in self._main_graph.astream(
                 {"messages": messages},
                 config={"recursion_limit": 15},
-                version="v2",
+                stream_mode="messages",
             ):
-                kind = event.get("event")
+                node = metadata.get("langgraph_node", "")
 
-                if kind == "on_tool_start":
-                    tool_call_count += 1
-                    tool_name = event.get("name", "unknown")
-                    logger.info(f"[{cid}] Sub-agent 호출 #{tool_call_count}: {tool_name} "
-                                f"(경과: {time.monotonic() - stream_start:.1f}s)")
-                    yield {"type": "tool_start", "name": tool_name,
-                           "args": event.get("data", {}).get("input", {})}
+                # tool_calls가 있는 AIMessage/AIMessageChunk → sub-agent 호출 시작
+                if isinstance(msg, (AIMessage, AIMessageChunk)):
+                    # tool_calls 감지 (Main Agent가 sub-agent 호출 결정)
+                    if hasattr(msg, "tool_calls") and msg.tool_calls:
+                        for tc in msg.tool_calls:
+                            tool_name = tc.get("name", "")
+                            if tool_name and tool_name not in active_tools:
+                                active_tools.add(tool_name)
+                                tool_call_count += 1
+                                logger.info(
+                                    f"[{cid}] Sub-agent 호출 #{tool_call_count}: {tool_name} "
+                                    f"(경과: {time.monotonic() - stream_start:.1f}s)"
+                                )
+                                yield {"type": "tool_start", "name": tool_name,
+                                       "args": tc.get("args", {})}
 
-                elif kind == "on_tool_end":
-                    tool_name = event.get("name", "unknown")
-                    last_tool_end_time = time.monotonic()
-                    output = event.get("data", {}).get("output", "")
-                    if hasattr(output, "content"):
-                        result_str = str(output.content)
-                    else:
-                        result_str = str(output) if output else ""
-                    is_error = (
-                        not result_str or len(result_str.strip()) < 5
-                        or result_str.startswith("Sub-agent error:")
-                    )
-                    logger.info(f"[{cid}] tool_end: {tool_name}, 결과 길이={len(result_str)}, "
-                                f"에러={is_error} (경과: {last_tool_end_time - stream_start:.1f}s)")
-                    yield {"type": "tool_end", "name": tool_name,
-                           "success": not is_error}
-
-                elif kind == "on_chat_model_stream":
-                    metadata = event.get("metadata", {})
-                    langgraph_node = metadata.get("langgraph_node", "")
-                    checkpoint_ns = metadata.get("checkpoint_ns", "")
-
-                    # 디버그: 첫 10개 on_chat_model_stream 이벤트의 metadata 로깅
-                    # → 실제 값 확인 후 필터링 조건 확정 예정
-                    if stream_debug_count < 10:
-                        stream_debug_count += 1
-                        logger.info(f"[{cid}] [STREAM-META #{stream_debug_count}] "
-                                    f"node='{langgraph_node}', ns='{checkpoint_ns}', "
-                                    f"event_name='{event.get('name', '?')}'")
-
-                    # sub-agent 내부 토큰 필터링
-                    # SubAgentTool은 _run_sub_agent → graph.ainvoke()로 실행되므로
-                    # astream_events에서 sub-agent 내부 LLM 토큰이 나올 수 없음
-                    # (ainvoke는 스트리밍하지 않음)
-                    # 따라서 on_chat_model_stream은 모두 Main Agent 토큰임
-                    # → 필터링 없이 전달
-
-                    chunk = event.get("data", {}).get("chunk")
-                    if chunk and hasattr(chunk, "content"):
-                        content = chunk.content
+                    # Main Agent의 "agent" 노드에서 나온 텍스트 토큰만 전달
+                    if node == "agent" and isinstance(msg, AIMessageChunk):
+                        content = msg.content
                         if isinstance(content, str) and content:
                             if first_token_time is None:
                                 first_token_time = time.monotonic()
-                                logger.info(f"[{cid}] 첫 토큰: {first_token_time - stream_start:.1f}s")
+                                logger.info(f"[{cid}] 첫 토큰: "
+                                            f"{first_token_time - stream_start:.1f}s")
                             token_count += 1
                             yield {"type": "token", "content": content}
                         elif isinstance(content, list):
@@ -1133,13 +1107,21 @@ class BedrockAgent:
                                         token_count += 1
                                         yield {"type": "token", "content": text}
 
-                elif kind == "on_chain_end":
-                    # Main graph 최종 종료 감지
-                    metadata = event.get("metadata", {})
-                    if not metadata.get("checkpoint_ns") and event.get("name") == "LangGraph":
-                        logger.info(f"[{cid}] Main graph 종료 감지 "
-                                    f"(경과: {time.monotonic() - stream_start:.1f}s, "
-                                    f"토큰 {token_count}개)")
+                # ToolMessage → sub-agent 완료
+                elif isinstance(msg, ToolMessage):
+                    tool_name = msg.name or "unknown"
+                    result_str = str(msg.content) if msg.content else ""
+                    is_error = (
+                        not result_str or len(result_str.strip()) < 5
+                        or result_str.startswith("Sub-agent error:")
+                    )
+                    logger.info(
+                        f"[{cid}] tool_end: {tool_name}, 결과 길이={len(result_str)}, "
+                        f"에러={is_error} (경과: {time.monotonic() - stream_start:.1f}s)"
+                    )
+                    active_tools.discard(tool_name)
+                    yield {"type": "tool_end", "name": tool_name,
+                           "success": not is_error}
 
             total_time = time.monotonic() - stream_start
             logger.info(f"[{cid}] 완료: {total_time:.1f}s, sub-agent 호출 {tool_call_count}회, "
