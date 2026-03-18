@@ -120,13 +120,17 @@ function preprocessMarkdown(content: string, isStreaming?: boolean): string {
 
   let result = content;
 
-  // 헤딩 앞에 개행 보정 (테이블 행 내부의 # 은 건드리지 않음)
-  // 줄 단위로 처리: | 로 시작하는 줄은 테이블이므로 스킵
-  const headingFixed = result.split("\n").map((line, idx, arr) => {
+  // 헤딩 앞에 개행 보정
+  // - 테이블 행(| 로 시작)은 스킵
+  // - 이미 줄 시작에 있는 헤딩(##, ### 등)은 스킵
+  // - 텍스트 중간에 헤딩이 이어붙은 경우만 분리 (예: "텍스트## 제목" → "텍스트\n\n## 제목")
+  const headingFixed = result.split("\n").map((line) => {
     // 테이블 행이면 그대로 유지
     if (line.trimStart().startsWith("|")) return line;
-    // 이전 줄이 있고, 줄 안에 헤딩이 이어붙어 있으면 분리
-    return line.replace(/([^\n])(#{1,6}\s)/g, "$1\n\n$2");
+    // 줄 시작이 이미 # 이면 (정상 헤딩) 그대로 유지
+    if (/^\s*#{1,6}\s/.test(line)) return line;
+    // 텍스트 중간에 헤딩이 붙어있는 경우만 분리
+    return line.replace(/([^\n#])(#{1,6}\s)/g, "$1\n\n$2");
   });
   result = headingFixed.join("\n");
 
