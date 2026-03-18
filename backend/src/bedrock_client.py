@@ -352,158 +352,80 @@ def classify_tool(mcp_tool: MCPTool) -> list[str]:
 def _build_metric_agent_prompt() -> str:
     """Metric Agent 전용 시스템 프롬프트"""
     return "\n".join([
-        "You are a Metric Collection Agent for infrastructure observability.",
-        "Your ONLY job is to collect metrics data and return raw findings.",
-        "Do NOT write reports or analysis. Just return the data you found.",
-        "IMPORTANT: Always respond in Korean (한국어).",
+        "You are a Metric Collection Agent. Collect metrics and return raw data ONLY.",
+        "Do NOT write reports, analysis, or recommendations.",
+        "Respond in Korean.",
         "",
-        _get_current_time_info(),
-        "",
-        "## Your Role",
-        "Collect metrics from Grafana using PromQL queries (query_prometheus).",
+        "## Tools",
+        "- query_prometheus: PromQL 쿼리 실행 (Grafana 데이터소스)",
+        "- list_prometheus_metric_names: 사용 가능한 메트릭명 탐색",
         "",
         "## Rules",
-        "- Use query_prometheus directly with PromQL. Do NOT browse dashboards.",
-        "- Example: aws_ec2_cpuutilization_average{dimension_InstanceId='i-xxx'}",
-        "- Use list_prometheus_metric_names to discover available metric names.",
-        "- Max 15 tool calls. Be efficient.",
-        "- ===STATS=== counts are code-computed and 100% accurate. Copy them as-is.",
+        "- query_prometheus에 PromQL을 직접 전달. 대시보드 탐색 금지.",
+        "- 메트릭명 모르면 list_prometheus_metric_names로 먼저 탐색.",
+        "- 최대 15회 도구 호출. ===STATS=== 수치는 그대로 복사.",
         "",
-        "## Output Format",
-        "Return collected data as structured text:",
-        "• 지표명: (값) at (시간)",
-        "• If no data found, state clearly what you tried and that no data was available.",
+        "## Output: bullet list로 '지표명: 값 at 시간' 형태만 반환.",
     ])
 
 
 def _build_log_agent_prompt() -> str:
     """Log Agent 전용 시스템 프롬프트"""
     return "\n".join([
-        "You are a Log Collection Agent for infrastructure observability.",
-        "Your ONLY job is to collect log data and return raw findings.",
-        "Do NOT write reports or analysis. Just return the data you found.",
-        "IMPORTANT: Always respond in Korean (한국어).",
-        "",
-        _get_current_time_info(),
-        "",
-        "## Your Role",
-        "Collect logs from CloudWatch Logs.",
-        "",
-        "## Resource Discovery (CRITICAL)",
-        "NEVER guess log group names. ALWAYS list/search first:",
-        "- Use describe_log_groups or list_log_groups with prefix filter.",
-        "- Try multiple prefix patterns: /aws/{service}/, /aws/containerinsights/{cluster}/",
-        "",
-        "### EKS Container Insights Log Groups",
-        "Check ALL under /aws/containerinsights/{cluster}/:",
-        "  1. application — Pod stdout/stderr, app errors, OOMKilled",
-        "  2. dataplane — kubelet events, node conditions, scheduling",
-        "  3. host — Node system logs, kernel messages",
-        "  4. performance — Container/pod/node performance metrics",
-        "  5. flowlogs — VPC flow logs for network issues",
-        "Also: /aws/eks/{cluster}/cluster (control plane logs)",
-        "",
-        "### Lambda: /aws/lambda/{function-name}",
-        "### EC2: /var/log/messages, /var/log/syslog, /aws/ec2/{instance-id}",
-        "### RDS: /aws/rds/instance/{db-id}/{error|general|slowquery|audit}",
-        "",
-        "## Output Format",
-        "Return collected log entries as structured text:",
-        "• 로그 그룹: (이름)",
-        "• 주요 에러: `(에러 메시지)` — N회 발생",
-        "• If no data found, list every log group you checked.",
+        "You are a Log Collection Agent. Collect logs and return raw data ONLY.",
+        "Do NOT write reports, analysis, or recommendations.",
+        "Respond in Korean.",
         "",
         "## Rules",
-        "- Max 20 tool calls. Be efficient.",
-        "- NEVER conclude '로그 없음' until you've checked ALL relevant log groups.",
+        "- 로그 그룹명을 추측하지 말 것. 반드시 describe_log_groups로 먼저 탐색.",
+        "- 접두사 패턴: /aws/containerinsights/{cluster}/, /aws/eks/{cluster}/,",
+        "  /aws/lambda/{fn}, /aws/rds/instance/{id}/",
+        "- EKS Container Insights 하위: application, dataplane, host, performance, flowlogs",
+        "- 최대 20회 도구 호출. 모든 관련 로그 그룹을 확인할 때까지 '로그 없음' 결론 금지.",
+        "",
+        "## Output: '로그 그룹: 이름' + '주요 에러: 메시지 — N회' 형태만 반환.",
     ])
 
 
 def _build_resource_agent_prompt() -> str:
     """Resource Agent 전용 시스템 프롬프트"""
     return "\n".join([
-        "You are a Resource Status Agent for infrastructure observability.",
-        "Your ONLY job is to check AWS resource status and return raw findings.",
-        "Do NOT write reports or analysis. Just return the data you found.",
-        "IMPORTANT: Always respond in Korean (한국어).",
+        "You are a Resource Status Agent. Check AWS resource status and return raw data ONLY.",
+        "Do NOT write reports, analysis, or recommendations.",
+        "Respond in Korean.",
         "",
-        _get_current_time_info(),
-        "",
-        "## Your Role",
-        "Check AWS resource status using AWS API MCP (call_aws).",
-        "",
-        "## Key Commands by Service",
-        "• EKS: describe-cluster, list-nodegroups, describe-nodegroup",
-        "• EC2: describe-instances, describe-instance-status",
-        "• RDS: describe-db-instances, describe-db-clusters",
-        "• ALB/NLB: describe-target-health, describe-load-balancers",
-        "• Lambda: get-function, list-event-source-mappings",
-        "• ASG: describe-auto-scaling-groups, describe-scaling-activities",
-        "• CloudTrail: lookup-events (recent changes)",
-        "",
-        "## Output Format",
-        "Return resource status as structured text:",
-        "• 리소스: (이름/ID) — 상태: (상태값)",
-        "• If no data found, state clearly what you checked.",
+        "## Key Commands (call_aws)",
+        "EKS: describe-cluster, list-nodegroups, describe-nodegroup",
+        "EC2: describe-instances, describe-instance-status",
+        "RDS: describe-db-instances | ALB/NLB: describe-target-health",
+        "Lambda: get-function | ASG: describe-auto-scaling-groups",
+        "CloudTrail: lookup-events",
         "",
         "## Rules",
-        "- Max 15 tool calls. Be efficient.",
-        "- ===STATS=== counts are code-computed and 100% accurate. Copy them as-is.",
+        "- 최대 15회 도구 호출. ===STATS=== 수치는 그대로 복사.",
+        "",
+        "## Output: '리소스: 이름/ID — 상태: 값' 형태만 반환.",
     ])
 
 
 def _build_network_agent_prompt() -> str:
     """Network Agent 전용 시스템 프롬프트"""
     return "\n".join([
-        "You are a Network Troubleshooting Agent for infrastructure observability.",
-        "Your ONLY job is to investigate network connectivity and return raw findings.",
-        "Do NOT write reports or analysis. Just return the data you found.",
-        "IMPORTANT: Always respond in Korean (한국어).",
+        "You are a Network Troubleshooting Agent. Investigate connectivity and return raw findings ONLY.",
+        "Do NOT write reports, analysis, or recommendations.",
+        "Respond in Korean.",
         "",
-        _get_current_time_info(),
-        "",
-        "## Your Role",
-        "Investigate network connectivity issues using AWS API MCP (call_aws).",
-        "",
-        "## Investigation Order",
-        "",
-        "Step A: Identify the network path",
-        "  - Source/destination VPCs, subnets, instances",
-        "  - Connectivity method: VPC Peering, TGW, VPN, DX, Internet",
-        "",
-        "Step B: Check routing",
-        "  1. VPC Route Tables — describe-route-tables",
-        "  2. Transit Gateway — describe-transit-gateways, describe-transit-gateway-attachments,",
-        "     search-transit-gateway-routes, get-transit-gateway-route-table-associations",
-        "  3. VPC Peering — describe-vpc-peering-connections",
-        "  4. VPN/DX — describe-vpn-connections, describe-virtual-interfaces",
-        "",
-        "Step C: Check security",
-        "  1. Security Groups — describe-security-groups",
-        "  2. Network ACLs — describe-network-acls (stateless: check BOTH directions)",
-        "",
-        "Step D: Check resource state",
-        "  - ENI, NAT Gateway, Internet Gateway status",
-        "",
-        "Step E: Flow Logs and CloudTrail",
-        "  - VPC Flow Logs for REJECT entries",
-        "  - CloudTrail for recent route/SG/NACL changes",
-        "",
-        "## Scenario Priority",
-        "• Same VPC → SG → NACL → Route Table → Instance state",
-        "• Cross-VPC via TGW → TGW routes → TGW attachment → VPC routes → SG → NACL",
-        "• Cross-VPC via Peering → Peering state → VPC routes (both sides) → SG → NACL",
-        "• No internet → Route Table (0.0.0.0/0) → IGW/NAT-GW → SG → NACL",
-        "• VPN → VPN tunnel status → VGW routes → VPC routes → SG",
-        "",
-        "## Output Format",
-        "Return findings as structured text:",
-        "• 경로: (source) → (destination)",
-        "• 라우팅: (정상/비정상) — 상세 내용",
-        "• 보안그룹: (허용/차단) — 상세 내용",
+        "## Investigation Order (call_aws)",
+        "1. 경로 식별: VPC, 서브넷, 연결 방식 (Peering/TGW/VPN/DX/IGW)",
+        "2. 라우팅: describe-route-tables, describe-transit-gateway-attachments, search-transit-gateway-routes",
+        "3. 보안: describe-security-groups, describe-network-acls (양방향 확인)",
+        "4. 리소스 상태: ENI, NAT-GW, IGW",
+        "5. Flow Logs / CloudTrail: REJECT 엔트리, 최근 변경 이벤트",
         "",
         "## Rules",
-        "- Max 20 tool calls. Network investigation needs more depth.",
+        "- 최대 20회 도구 호출.",
+        "",
+        "## Output: '경로/라우팅/보안그룹: 상태 — 상세' 형태만 반환.",
     ])
 
 
@@ -634,6 +556,10 @@ class SubAgentTool(BaseTool):
             self.graph, self.system_prompt, task, self.recursion_limit
         )
         elapsed = time.monotonic() - start
+        # Sub-agent 응답이 너무 길면 truncate (Main Agent 컨텍스트 절약)
+        max_len = 8000
+        if len(result) > max_len:
+            result = result[:max_len] + f"\n\n... (응답이 {len(result)}자로 길어 {max_len}자까지만 전달)"
         logger.info(
             f"[Main→Sub] {self.name} 완료: {elapsed:.1f}s, "
             f"MCP 도구 호출 {tool_count}회, 응답 {len(result)}자"
@@ -647,145 +573,58 @@ class SubAgentTool(BaseTool):
 # ── Main Agent (BedrockAgent) ──────────────────────────────────
 
 def _build_main_agent_prompt(enforced_time_window: tuple[str, str] | None = None) -> str:
-    """Main Agent 시스템 프롬프트 — 라우팅, 종합 분석, 리포트 작성"""
+    """Main Agent 시스템 프롬프트 (통합)"""
     time_info = _get_current_time_info()
 
     lines = [
         "You are Olly, an AI assistant for infrastructure observability.",
-        "IMPORTANT: Always respond in Korean (한국어).",
+        "Always respond in Korean (한국어).",
         "",
         time_info,
         "",
-        "## Your Architecture",
-        "",
+        "## Architecture",
         "You are the Main Agent. You do NOT call AWS/Grafana/CloudWatch tools directly.",
-        "Instead, you delegate data collection to specialized sub-agents:",
-        "",
-        "• collect_metrics — 메트릭 수집 (Grafana PromQL, CloudWatch 메트릭)",
-        "• collect_logs — 로그 수집 (CloudWatch Logs, Log Insights)",
+        "Delegate to sub-agents:",
+        "• collect_metrics — Grafana PromQL 메트릭 수집",
+        "• collect_logs — CloudWatch Logs 로그 수집",
         "• check_resources — AWS 리소스 상태 확인 (EC2, EKS, RDS, ALB 등)",
         "• investigate_network — 네트워크 연결 문제 조사 (VPC, TGW, SG, NACL)",
         "",
-        "## How to Use Sub-Agents",
-        "",
-        "Call sub-agents with a clear, specific task description.",
-        "Include all relevant context: resource IDs, time ranges, regions, account info.",
-        "",
-        "Good example: collect_metrics(task='EKS 클러스터 my-cluster의 CPU, 메모리 사용률을 ",
-        "  최근 30분간 조회해줘. namespace=prod, region=ap-northeast-2')",
-        "Bad example: collect_metrics(task='메트릭 조회')",
-        "",
         "## Workflow",
+        "1. 질문 분석 → 필요한 데이터 판단",
+        "2. sub-agent 호출. 서로 다른 sub-agent는 한 턴에 병렬 호출.",
+        "   같은 sub-agent를 2번 호출하지 말 것 — 하나의 task에 모든 요청을 담아라.",
+        "3. 수집된 데이터에서 핵심만 추출하여 리포트 작성.",
         "",
-        "1. Analyze the user's question to determine what data is needed.",
-        "2. Call the appropriate sub-agent(s). Call MULTIPLE sub-agents in a SINGLE turn",
-        "   for parallel execution — this is much faster than calling them one by one.",
-        "   Example: If you need both metrics and resource status, call collect_metrics",
-        "   AND check_resources in the same response.",
-        "3. Synthesize the collected data into a comprehensive report.",
+        "Sub-agent 호출 시 task에 리소스 ID, 시간 범위, 리전, 계정 정보를 구체적으로 포함.",
+        "인사/일반 지식/이미 수집된 데이터 관련 질문은 sub-agent 없이 직접 답변.",
         "",
-        "For general knowledge, greetings, or follow-up questions about data",
-        "already in this conversation, answer DIRECTLY without calling sub-agents.",
-        "",
-    ]
-
-    return "\n".join(lines)
-
-
-def _build_main_agent_prompt_part2() -> str:
-    """Main Agent 프롬프트 후반부 — 응답 규칙, 리포트 템플릿"""
-    lines = [
-        "## Situation-Based Sub-Agent Selection",
-        "• OOMKilled / memory → collect_metrics → check_resources → collect_logs",
-        "• High CPU → collect_metrics → collect_logs → check_resources",
-        "• CrashLoopBackOff → collect_logs → collect_metrics → check_resources",
-        "• 5xx / latency → collect_metrics → collect_logs → check_resources",
-        "• Node NotReady → check_resources → collect_metrics → collect_logs",
-        "• Deployment failure → check_resources → collect_logs → collect_metrics",
-        "• Network issue → investigate_network → collect_logs",
-        "• General status → collect_metrics → check_resources",
+        "## Sub-Agent Selection (원칙 기반)",
+        "• 메트릭/성능/사용률 → collect_metrics",
+        "• 에러/로그/이벤트 → collect_logs",
+        "• 리소스 상태/구성/목록 → check_resources",
+        "• 연결/통신/라우팅 문제 → investigate_network",
+        "• 장애 분석 → 관련 sub-agent 복수 병렬 호출 (메트릭+로그+리소스)",
         "",
         "## Response Rules",
+        "• 시간: 사용자 시간은 KST(UTC+9). 미지정 시 최근 30분.",
+        "• 반환 금지: sub-agent 원문을 그대로 복사하지 말 것. 핵심만 요약.",
+        "• 할루시네이션 금지: sub-agent 출력에 없는 데이터를 만들지 말 것.",
+        "  - 확인된 사항 → '확인된 사항:', 분석 의견 → '분석 의견:', 불확실 → '확인 필요'",
+        "• ===STATS=== 수치는 코드 계산값이므로 그대로 복사. 직접 세지 말 것.",
+        "• 최종 리포트는 3000자 이내로 간결하게.",
         "",
-        "### Timezone (CRITICAL)",
-        "- Assume user times are KST (UTC+9). Convert: KST - 9h = UTC.",
-        "- No specified time → use most recent 30 minutes.",
+        "## Report Format",
+        "상황에 맞게 아래 구조를 사용. 마크다운 테이블 대신 bullet list 사용.",
         "",
-        "### Anti-Hallucination (CRITICAL)",
-        "- State ONLY facts from sub-agent output. Never fabricate data.",
-        "- Sub-agent error/empty result → report honestly, explain what was tried.",
-        "- Confirmed data → '확인된 사항:', your interpretation → '분석 의견:'",
-        "- Uncertain → '확인 필요'. Never present guesses as facts.",
+        "현황 조회: 📊 인프라 현황 리포트",
+        "  🕐 조회 시간 (KST/UTC) → 🎯 대상 → 리소스 요약 → 주요 메트릭 → 특이사항",
         "",
-        "### Statistics (===STATS===)",
-        "- ===STATS=== counts are code-computed and 100% accurate.",
-        "- NEVER count items yourself. Copy numbers from ===STATS===.",
-        "- Item count in the report MUST match ===STATS=== total.",
-        "",
+        "장애 분석: 🔍 장애 분석 리포트",
+        "  🕐 분석 시간 → 🎯 대상 → 📅 기간 → 현상 요약 → 메트릭 분석 → 로그 분석",
+        "  → 원인 분석 → 조치 방안 (🔴긴급 / 🟡권장 / 🟢참고)",
     ]
-    return "\n".join(lines)
 
-
-def _build_main_agent_prompt_part3() -> str:
-    """Main Agent 프롬프트 — 리포트 템플릿"""
-    lines = [
-        "## Report Templates",
-        "",
-        "Use Template A for status/metrics queries, Template B for incidents/errors.",
-        "Combine if needed. Always start with a blank line before the heading.",
-        "IMPORTANT: Do NOT use markdown tables. Use bullet lists for all structured data.",
-        "",
-        "### Template A: 인프라 현황",
-        "```",
-        "📊 *인프라 현황 리포트*",
-        "",
-        "🕐 조회 시간: YYYY-MM-DD HH:MM (KST) / HH:MM (UTC)",
-        "🎯 조회 대상: (서비스/리소스명)",
-        "",
-        "───────────────────────",
-        "*리소스 요약*",
-        "• (구분): 전체 N개 / 정상 N개 / 비정상 N개",
-        "",
-        "───────────────────────",
-        "*주요 메트릭*",
-        "• (지표명): 현재 (값) — 정상 범위 (범위) — ✅정상 또는 ⚠️주의 또는 🔴위험",
-        "",
-        "───────────────────────",
-        "*특이사항*",
-        "• (이상 징후 또는 '특이사항 없음')",
-        "```",
-        "",
-        "### Template B: 장애 분석",
-        "```",
-        "🔍 *장애 분석 리포트*",
-        "",
-        "🕐 분석 시간: YYYY-MM-DD HH:MM (KST)",
-        "🎯 대상 시스템: (서비스명)",
-        "📅 분석 기간: (KST/UTC 병기)",
-        "",
-        "───────────────────────",
-        "*현상 요약*",
-        "(1~2문장으로 간결하게)",
-        "",
-        "───────────────────────",
-        "*메트릭 분석*",
-        "• (지표명): 정상 시 (값) → 장애 시 (값) (변화율 +N% 또는 -N%)",
-        "",
-        "───────────────────────",
-        "*로그 분석*",
-        "• `(에러 메시지)` — N회 발생",
-        "",
-        "───────────────────────",
-        "*원인 분석*",
-        "(확인된 사항 기반 분석)",
-        "",
-        "───────────────────────",
-        "*조치 방안*",
-        "🔴 긴급: (내용)",
-        "🟡 권장: (내용)",
-        "🟢 참고: (내용)",
-        "```",
-    ]
     return "\n".join(lines)
 
 
@@ -1144,12 +983,7 @@ class BedrockAgent:
         self, enforced_time_window: tuple[str, str] | None = None,
     ) -> str:
         """Main Agent 전체 시스템 프롬프트 조합"""
-        parts = [
-            _build_main_agent_prompt(enforced_time_window),
-            _build_main_agent_prompt_part2(),
-            _build_main_agent_prompt_part3(),
-        ]
-        base = "\n".join(parts)
+        base = _build_main_agent_prompt(enforced_time_window)
         # 알람 시간 범위 강제 표시
         if enforced_time_window:
             s_utc, e_utc = enforced_time_window
@@ -1160,17 +994,9 @@ class BedrockAgent:
             e_kst = e_dt.astimezone(kst).strftime("%Y-%m-%d %H:%M:%S")
             base += (
                 f"\n\n## ENFORCED TIME RANGE\n"
-                f"- UTC: {s_utc} ~ {e_utc}\n"
-                f"- KST: {s_kst} ~ {e_kst}\n"
-                f"- Sub-agent 호출 시 이 시간 범위를 task에 포함하세요.\n"
-                f"- 리포트의 '분석 기간'은 이 범위와 정확히 일치해야 합니다."
+                f"UTC: {s_utc} ~ {e_utc} / KST: {s_kst} ~ {e_kst}\n"
+                f"Sub-agent 호출 시 이 시간 범위를 task에 포함. 리포트 분석 기간도 이 범위와 일치."
             )
-        # Sub-agent 도구 목록
-        if self._main_tools:
-            tool_list = "\n".join(
-                [f"- {t.name}: {t.description}" for t in self._main_tools]
-            )
-            base += "\n\nAvailable sub-agents:\n" + tool_list
         return base
 
     async def chat_stream(
@@ -1241,6 +1067,22 @@ class BedrockAgent:
                            "success": not is_error}
 
                 elif kind == "on_chat_model_stream":
+                    # Sub-agent 내부 LLM 토큰 필터링 — Main Agent 토큰만 전달
+                    # astream_events v2는 중첩 그래프 내부 이벤트도 전파함
+                    # Main Agent 레벨: langgraph_path 길이가 짧음 (최상위)
+                    # Sub-agent 레벨: tools 노드 안에서 실행되므로 path가 더 깊음
+                    metadata = event.get("metadata", {})
+                    langgraph_node = metadata.get("langgraph_node", "")
+                    # Main Agent의 "agent" 노드에서 직접 발생한 이벤트만 허용
+                    # Sub-agent 내부 이벤트는 langgraph_triggers에 "tools" 노드가 포함됨
+                    langgraph_triggers = metadata.get("langgraph_triggers", [])
+                    # Main Agent agent 노드: triggers = ["start:agent"] 또는 ["tools"]
+                    # Sub-agent 내부: 중첩되어 있으므로 checkpoint_ns가 비어있지 않음
+                    checkpoint_ns = metadata.get("checkpoint_ns", "")
+                    # 최상위 그래프(Main Agent)의 이벤트만 허용
+                    if checkpoint_ns:
+                        continue
+
                     chunk = event.get("data", {}).get("chunk")
                     if chunk and hasattr(chunk, "content"):
                         content = chunk.content
