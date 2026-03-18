@@ -68,8 +68,21 @@ ENV PATH="/app/.venv/bin:$PATH:/usr/sbin" \
 
 # Install other tools as needed for the MCP server
 # Add non-root user and ability to change directory into /root
-RUN dnf install -y shadow-utils procps && \
+# 시스템 Python 잔여물 제거 (venv 내 Python 3.13만 사용)
+RUN dnf install -y shadow-utils procps openssl && \
+    # OpenSSL 3.0.4 미만이면 자동 업그레이드 시도
+    OPENSSL_VER=$(openssl version | awk '{print $2}') && \
+    MAJOR=$(echo "$OPENSSL_VER" | cut -d. -f1) && \
+    MINOR=$(echo "$OPENSSL_VER" | cut -d. -f2) && \
+    PATCH=$(echo "$OPENSSL_VER" | cut -d. -f3) && \
+    if [ "$MAJOR" -lt 3 ] || { [ "$MAJOR" -eq 3 ] && [ "$MINOR" -eq 0 ] && [ "$PATCH" -lt 4 ]; }; then \
+      echo "WARNING: OpenSSL $OPENSSL_VER < 3.0.4, upgrading..." && \
+      dnf update -y openssl openssl-libs; \
+    fi && \
+    echo "OpenSSL version: $(openssl version)" && \
     dnf clean all && \
+    # 시스템 Python 잔여물 제거 (venv 내 Python 3.13만 사용)
+    rm -rf /usr/lib/python3* /usr/lib64/python3* /usr/bin/python* /usr/bin/pydoc* /usr/bin/idle* 2>/dev/null || true && \
     groupadd --force --system app && \
     useradd app -g app -d /app && \
     chmod o+x /root
