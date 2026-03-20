@@ -403,8 +403,11 @@ def _build_resource_agent_prompt() -> str:
         "",
         "## Rules",
         "- 최대 15회 도구 호출.",
+        "- 리스트/목록 요청 시 각 리소스의 상세 정보를 빠짐없이 개별 나열할 것.",
+        "  (이름/Name 태그, 인스턴스 ID, 타입, 상태, 프라이빗 IP, 퍼블릭 IP, AZ 등)",
+        "- 요약하거나 집계하지 말 것. 개별 항목을 그대로 반환.",
         "",
-        "## Output: '리소스: 이름/ID — 상태: 값' 형태만 반환.",
+        "## Output: '리소스: 이름/ID — 상태: 값 — 타입: 값 — IP: 값 — AZ: 값' 형태로 개별 반환.",
     ])
 
 
@@ -577,7 +580,8 @@ class SubAgentTool(BaseTool):
 # 질문 유형 분류
 _CLASSIFY_TYPES = {
     "incident": "장애/알람 분석",
-    "status": "현황/상태 조회",
+    "status_list": "리소스 목록/리스트 조회",
+    "status_summary": "현황 요약/상태 확인",
     "general": "일반 질문 (인사, 지식 등)",
 }
 
@@ -590,7 +594,8 @@ def _build_classify_prompt() -> str:
         "",
         "Types:",
         "- incident: 장애, 알람, 에러, 재시작, OOM, 트러블슈팅, 원인 분석",
-        "- status: 현황 조회, 리소스 목록, 상태 확인, 메트릭 조회",
+        "- status_list: 리소스 목록/리스트 조회, 개별 항목 나열 요청 (예: EC2 리스트, 인스턴스 목록, RDS 목록)",
+        "- status_summary: 현황 요약, 전체 상태 확인, 메트릭 조회, 리소스 개수/분포 요약",
         "- general: 인사, 일반 지식, 이전 대화 관련 질문",
     ])
 
@@ -671,7 +676,19 @@ def _build_report_prompt(report_type: str) -> str:
             "🕐 분석 시간 → 🎯 대상 → 📅 기간 → 현상 요약 → 메트릭 분석 → 로그 분석",
             "→ 원인 분석 → 조치 방안 (🔴긴급 / 🟡권장 / 🟢참고)",
         ])
-    elif report_type == "status":
+    elif report_type == "status_list":
+        base.extend([
+            "",
+            "## Report Format: � 리소스 목록",
+            "🕐 조회 시간 (KST/UTC) → 🎯 대상 (리전, 리소스 유형)",
+            "",
+            "## 중요: 개별 리소스를 모두 나열할 것",
+            "• 수집된 데이터의 각 리소스를 한 줄씩 빠짐없이 나열.",
+            "• 항목별로: 이름(Name 태그), 인스턴스 ID, 타입, 상태, 프라이빗 IP, 퍼블릭 IP, AZ 등 포함.",
+            "• 요약/집계(총 N개, 타입 분포 등)는 하지 말 것. 개별 목록이 핵심.",
+            "• 마지막에 총 개수만 한 줄로 표시.",
+        ])
+    elif report_type == "status_summary":
         base.extend([
             "",
             "## Report Format: 📊 인프라 현황 리포트",
@@ -829,7 +846,8 @@ class BedrockAgent:
             ),
             "resource": (
                 "AWS 리소스 상태 확인 에이전트. EC2, EKS, RDS, ALB 등의 상태를 조회합니다. "
-                "task에 리소스 ID, 서비스 유형, 리전, 확인할 항목을 명시하세요."
+                "task에 리소스 ID, 서비스 유형, 리전, 확인할 항목을 명시하세요. "
+                "리스트/목록 요청 시 task에 '각 리소스의 상세 정보(이름, ID, 타입, 상태, IP, AZ 등)를 개별적으로 모두 나열하라'고 명시하세요."
             ),
             "network": (
                 "네트워크 문제 조사 에이전트. VPC, TGW, SG, NACL, 라우팅 등을 조사합니다. "
@@ -868,8 +886,10 @@ class BedrockAgent:
             # 분류 결과를 메타데이터로 전달 (SystemMessage로 삽입)
             if "incident" in result:
                 query_type = "incident"
-            elif "status" in result:
-                query_type = "status"
+            elif "status_list" in result:
+                query_type = "status_list"
+            elif "status_summary" in result or "status" in result:
+                query_type = "status_summary"
             else:
                 query_type = "general"
 
@@ -886,7 +906,7 @@ class BedrockAgent:
                 if isinstance(m, SystemMessage) and isinstance(m.content, str):
                     if m.content.startswith("__QUERY_TYPE__:"):
                         qtype = m.content.split(":")[1]
-                        if qtype in ("incident", "status"):
+                        if qtype in ("incident", "status_list", "status_summary"):
                             return "collect"
                         return "direct_answer"
             return "direct_answer"
@@ -984,7 +1004,7 @@ class BedrockAgent:
         async def report_setup_node(state: MessagesState) -> MessagesState:
             """수집된 데이터를 정리하여 리포트 작성용 메시지로 재구성"""
             # 질문 유형 추출
-            query_type = "status"
+            query_type = "status_summary"
             for m in state["messages"]:
                 if isinstance(m, SystemMessage) and isinstance(m.content, str):
                     if m.content.startswith("__QUERY_TYPE__:"):
