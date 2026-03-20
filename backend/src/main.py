@@ -236,20 +236,48 @@ async def chat(request: ChatRequest, x_user_id: Optional[str] = Header(None)):
 
         # StreamingResponse에 keepalive 용 heartbeat를 주입하는 래퍼
         async def event_generator_with_heartbeat():
-            """SSE 이벤트를 전달하면서, 장시간 무응답 시 heartbeat(SSE 주석)를 전송"""
-            gen = event_generator()
+            """SSE 이벤트를 전달하면서, 장시간 무응답 시 heartbeat(SSE 주석)를 전송.
+            
+            주의: asyncio.wait_for는 타임아웃 시 내부 코루틴을 cancel하므로
+            async generator의 __anext__()에 직접 사용하면 generator 상태가 깨질 수 있다.
+            대신 asyncio.Event 기반으로 generator를 별도 태스크에서 소비하여
+            cancel 없이 heartbeat를 전송한다.
+            """
             HEARTBEAT_INTERVAL = 15  # 초
 
-            while True:
+            queue: asyncio.Queue = asyncio.Queue()
+            done = asyncio.Event()
+
+            async def _producer():
+                """event_generator()를 소비하여 큐에 넣는 태스크"""
                 try:
-                    # HEARTBEAT_INTERVAL 내에 다음 이벤트가 오면 그대로 전달
-                    event = await asyncio.wait_for(gen.__anext__(), timeout=HEARTBEAT_INTERVAL)
-                    yield event
-                except StopAsyncIteration:
-                    break
-                except asyncio.TimeoutError:
-                    # 타임아웃 → heartbeat 전송 (SSE 주석은 클라이언트가 무시)
-                    yield ": heartbeat\n\n"
+                    async for event in event_generator():
+                        await queue.put(event)
+                except Exception as e:
+                    logger.error(f"Heartbeat producer error: {e}")
+                    await queue.put(f"data: {json.dumps({'error': str(e)})}\n\n")
+                finally:
+                    done.set()
+
+            producer_task = asyncio.create_task(_producer())
+
+            try:
+                while True:
+                    if done.is_set() and queue.empty():
+                        break
+                    try:
+                        event = await asyncio.wait_for(queue.get(), timeout=HEARTBEAT_INTERVAL)
+                        yield event
+                    except asyncio.TimeoutError:
+                        # 큐에서 대기 중 타임아웃 → heartbeat 전송 (generator에 영향 없음)
+                        yield ": heartbeat\n\n"
+            finally:
+                if not producer_task.done():
+                    producer_task.cancel()
+                    try:
+                        await producer_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
 
         return StreamingResponse(
             event_generator_with_heartbeat(),
