@@ -955,18 +955,38 @@ class BedrockAgent:
             return {"messages": [response]}
 
         async def collect_tools_node(state: MessagesState) -> MessagesState:
-            """Sub-agent 호출을 병렬 실행"""
+            """Sub-agent 호출을 병렬 실행.
+            
+            사용자 원본 메시지를 sub-agent task에 자동 첨부하여,
+            Main Agent가 task 요약 시 인스턴스 ID 등 핵심 정보를 누락하는 문제를 방지.
+            """
             messages = state["messages"]
             last_message = messages[-1]
             if not (hasattr(last_message, 'tool_calls') and last_message.tool_calls):
                 return {"messages": []}
 
+            # 사용자 원본 메시지 추출 (인스턴스 ID, 리소스명 등 핵심 컨텍스트 보존)
+            user_original = ""
+            for m in messages:
+                if isinstance(m, HumanMessage):
+                    user_original = m.content if isinstance(m.content, str) else str(m.content)
+                    break
+
             tool_map = {tool.name: tool for tool in main_tools}
 
             async def _dispatch_one(tool_call):
                 tool_name = tool_call["name"]
-                tool_args = tool_call["args"]
+                tool_args = dict(tool_call["args"])
                 tool_id = tool_call["id"]
+
+                # sub-agent task에 사용자 원본 메시지를 첨부
+                if user_original and "task" in tool_args:
+                    tool_args["task"] = (
+                        f"{tool_args['task']}\n\n"
+                        f"[사용자 원본 요청 — 리소스 ID/이름 등 핵심 정보를 반드시 참고]\n"
+                        f"{user_original}"
+                    )
+
                 logger.info(f"[Collect] Dispatching to sub-agent: {tool_name}")
                 matched = tool_map.get(tool_name)
                 if not matched:
