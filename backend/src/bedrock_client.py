@@ -38,9 +38,6 @@ def create_pydantic_model_from_schema(name: str, schema: dict) -> type[BaseModel
 
     fields = {}
     for prop_name, prop_schema in properties.items():
-        # MCP 프레임워크 내부 Context 파라미터는 스키마에서 제외
-        if prop_name == "ctx":
-            continue
         prop_type = prop_schema.get("type", "string")
         description = prop_schema.get("description", "")
 
@@ -277,8 +274,6 @@ class MCPToolWrapper(BaseTool):
                         logger.info(f"[시간 강제] call_aws CLI 시간 치환 완료")
                     kwargs["cli_command"] = cmd
 
-            # MCP 프레임워크가 자체 주입하는 ctx 파라미터 제거 (LLM이 임의 값을 넣을 수 있음)
-            kwargs.pop("ctx", None)
             logger.info(f"MCP tool {self.name} called with: {kwargs}")
             result = await self.mcp_manager.execute_tool(self.mcp_tool.name, kwargs)
 
