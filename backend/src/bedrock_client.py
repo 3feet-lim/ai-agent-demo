@@ -38,6 +38,9 @@ def create_pydantic_model_from_schema(name: str, schema: dict) -> type[BaseModel
 
     fields = {}
     for prop_name, prop_schema in properties.items():
+        # MCP 프레임워크 내부 Context 파라미터는 스키마에서 제외
+        if prop_name == "ctx":
+            continue
         prop_type = prop_schema.get("type", "string")
         description = prop_schema.get("description", "")
 
@@ -261,6 +264,8 @@ class MCPToolWrapper(BaseTool):
                         logger.info(f"[시간 강제] call_aws CLI 시간 치환 완료")
                     kwargs["cli_command"] = cmd
 
+            # MCP 프레임워크가 자체 주입하는 ctx 파라미터 제거 (LLM이 임의 값을 넣을 수 있음)
+            kwargs.pop("ctx", None)
             logger.info(f"MCP tool {self.name} called with: {kwargs}")
             result = await self.mcp_manager.execute_tool(self.mcp_tool.name, kwargs)
 
@@ -619,7 +624,9 @@ def _build_collect_prompt(enforced_time_window: tuple[str, str] | None = None) -
         "",
         "## Rules",
         "- 서로 다른 sub-agent는 한 턴에 병렬 호출.",
-        "- 같은 sub-agent를 2번 호출하지 말 것 — 하나의 task에 모든 요청을 담아라.",
+        "- 하나의 task에 필요한 요청을 최대한 구체적으로 담아 불필요한 재호출을 줄일 것.",
+        "- 단, 수집 결과가 불완전하거나 추가 컨텍스트가 필요한 경우(예: 특정 ID를 알아야 다음 조회가 가능한 경우) 같은 sub-agent를 다른 목적으로 재호출할 수 있다.",
+        "- 동일한 목적·동일한 파라미터로 같은 sub-agent를 반복 호출하는 것은 토큰 낭비이므로 금지.",
         "- task에 리소스 ID, 시간 범위, 리전, 계정 정보를 구체적으로 포함.",
         "- 시간: 사용자 시간은 KST(UTC+9). 미지정 시 최근 30분.",
         "",
@@ -962,16 +969,18 @@ class BedrockAgent:
                 return ToolMessage(content=str(result),
                                    name=tool_name, tool_call_id=tool_id)
 
-            # 같은 sub-agent 중복 호출 방지
-            seen_tools: dict[str, dict] = {}
+            # 같은 sub-agent에 동일한 task 내용의 중복 호출만 방지
+            seen_tools: dict[str, str] = {}  # name → task 내용
             unique_calls = []
             for tc in last_message.tool_calls:
                 name = tc["name"]
-                if name not in seen_tools:
-                    seen_tools[name] = tc
+                task_content = str(tc.get("args", {}).get("task", ""))
+                prev_task = seen_tools.get(name)
+                if prev_task is None or prev_task != task_content:
+                    seen_tools[name] = task_content
                     unique_calls.append(tc)
                 else:
-                    logger.warning(f"[Collect] 중복 sub-agent 호출 차단: {name}")
+                    logger.warning(f"[Collect] 동일 목적 중복 sub-agent 호출 차단: {name}")
 
             tool_messages = await asyncio.gather(
                 *[_dispatch_one(tc) for tc in unique_calls]
