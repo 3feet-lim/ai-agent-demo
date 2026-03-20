@@ -9,6 +9,11 @@ export const maxDuration = 300;
  * SSE 스트리밍 패스스루 프록시
  * Next.js rewrites는 SSE 응답을 버퍼링하므로,
  * Route Handler에서 직접 ReadableStream으로 전달하여 실시간 스트리밍을 구현
+ *
+ * AbortSignal.timeout은 SSE 스트리밍과 호환되지 않음:
+ * - timeout은 fetch 시작 시점부터 절대 시간으로 동작
+ * - heartbeat가 와도 타이머가 리셋되지 않아 장시간 스트리밍 시 강제 종료됨
+ * - 대신 백엔드 heartbeat(15초 간격)에 의존하여 연결 유지
  */
 export async function POST(request: NextRequest) {
   const body = await request.text();
@@ -21,8 +26,7 @@ export async function POST(request: NextRequest) {
       "X-User-Id": userId,
     },
     body,
-    // Sub-agent 수집이 오래 걸릴 수 있으므로 fetch 타임아웃을 5분으로 설정
-    signal: AbortSignal.timeout(300_000),
+    // AbortSignal.timeout 제거: SSE 스트리밍은 백엔드 heartbeat로 연결 유지
   });
 
   if (!backendRes.ok) {

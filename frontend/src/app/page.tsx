@@ -143,7 +143,8 @@ export default function Home() {
 
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 300_000);
+        // 초기 연결 타임아웃: 30초 (SSE 연결 수립까지만)
+        const timeoutId = setTimeout(() => controller.abort(), 30_000);
 
         const res = await fetch(`${API_BASE}/chat`, {
           method: "POST",
