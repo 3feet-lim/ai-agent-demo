@@ -2,6 +2,9 @@ import { NextRequest } from "next/server";
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://backend:8000";
 
+// Next.js Route Handler 실행 시간 제한 해제 (SSE 스트리밍은 장시간 연결 유지 필요)
+export const maxDuration = 300;
+
 /**
  * SSE 스트리밍 패스스루 프록시
  * Next.js rewrites는 SSE 응답을 버퍼링하므로,
@@ -18,6 +21,8 @@ export async function POST(request: NextRequest) {
       "X-User-Id": userId,
     },
     body,
+    // Sub-agent 수집이 오래 걸릴 수 있으므로 fetch 타임아웃을 5분으로 설정
+    signal: AbortSignal.timeout(300_000),
   });
 
   if (!backendRes.ok) {
