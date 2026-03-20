@@ -223,10 +223,36 @@ async def chat(request: ChatRequest, x_user_id: Optional[str] = Header(None)):
                 logger.error(f"Streaming error: {e}")
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
+                # 에러 발생 시에도 부분 응답이 있으면 저장
+                response_text = "".join(full_response)
+                if response_text:
+                    await store.add_message(conversation_id, "user", request.message)
+                    await store.add_message(
+                        conversation_id, "assistant",
+                        response_text + "\n\n⚠️ 응답 생성 중 오류가 발생하여 중단되었습니다."
+                    )
+
             yield "data: [DONE]\n\n"
 
+        # StreamingResponse에 keepalive 용 heartbeat를 주입하는 래퍼
+        async def event_generator_with_heartbeat():
+            """SSE 이벤트를 전달하면서, 장시간 무응답 시 heartbeat(SSE 주석)를 전송"""
+            gen = event_generator()
+            HEARTBEAT_INTERVAL = 15  # 초
+
+            while True:
+                try:
+                    # HEARTBEAT_INTERVAL 내에 다음 이벤트가 오면 그대로 전달
+                    event = await asyncio.wait_for(gen.__anext__(), timeout=HEARTBEAT_INTERVAL)
+                    yield event
+                except StopAsyncIteration:
+                    break
+                except asyncio.TimeoutError:
+                    # 타임아웃 → heartbeat 전송 (SSE 주석은 클라이언트가 무시)
+                    yield ": heartbeat\n\n"
+
         return StreamingResponse(
-            event_generator(),
+            event_generator_with_heartbeat(),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
