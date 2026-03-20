@@ -681,8 +681,13 @@ def _build_report_prompt(report_type: str) -> str:
         "",
         "## Rules",
         "• sub-agent 원문을 그대로 복사하지 말 것. 핵심만 요약.",
-        "• 할루시네이션 금지: 수집된 데이터에 없는 내용을 만들지 말 것.",
-        "  - 확인된 사항 → '확인된 사항:', 분석 의견 → '분석 의견:', 불확실 → '확인 필요'",
+        "• 🚨 할루시네이션 절대 금지:",
+        "  - '수집된 데이터' 섹션에 포함된 내용만 리포트에 사용할 것.",
+        "  - '수집 실패 항목'으로 표시된 데이터는 존재하지 않는 것으로 간주. 해당 영역은 '데이터 수집 실패'로 명시.",
+        "  - 수집된 데이터에 특정 메트릭/로그/리소스 정보가 없으면 '해당 데이터 없음 — 수집되지 않았거나 조회 실패'로 표기.",
+        "  - 데이터 없이 원인을 추측하거나 분석 의견을 작성하지 말 것.",
+        "  - 확인된 사항 → '확인된 사항:', 불확실 → '확인 필요 (데이터 미수집)'",
+        "• 유효 데이터가 전혀 없으면: 수집 실패 사실 + 재시도 안내만 작성.",
         "• 최종 리포트는 3000자 이내로 간결하게.",
         "• 데이터 형태에 따라 적절한 마크다운 포맷을 선택: 목록/리스트형 데이터는 테이블, 분석/설명은 bullet list.",
     ]
@@ -1043,7 +1048,11 @@ class BedrockAgent:
         report_llm = main_llm
 
         async def report_setup_node(state: MessagesState) -> MessagesState:
-            """수집된 데이터를 정리하여 리포트 작성용 메시지로 재구성"""
+            """수집된 데이터를 정리하여 리포트 작성용 메시지로 재구성.
+            
+            수집 결과를 코드 레벨로 검증하여 유효 데이터/에러/빈 결과를 분류하고,
+            리포트 LLM에 명시적으로 전달하여 hallucination을 방지한다.
+            """
             # 질문 유형 추출
             query_type = "status_summary"
             for m in state["messages"]:
@@ -1053,16 +1062,35 @@ class BedrockAgent:
 
             report_prompt = _build_report_prompt(query_type)
 
-            # 수집된 데이터 추출 (ToolMessage들)
-            collected_data = []
+            # 수집된 데이터 추출 및 유효성 검증
+            # 에러/타임아웃/빈 결과를 코드로 판별하여 LLM에 명시
+            _ERROR_PATTERNS = [
+                "Tool execution error", "Sub-agent error", "timed out",
+                "not found", "not connected", "Sub-agent가 응답을 생성하지 못했습니다",
+                "도구 호출 제한에 도달", "중복 호출 차단",
+            ]
+
+            collected_valid = []   # 유효한 수집 결과
+            collected_failed = []  # 실패/에러 결과
             for m in state["messages"]:
                 if isinstance(m, ToolMessage):
                     tool_name = m.name or "unknown"
                     content = str(m.content) if m.content else ""
-                    if content and len(content.strip()) > 5:
+                    stripped = content.strip()
+
+                    # 에러/빈 결과 판별
+                    is_error = (
+                        not stripped
+                        or len(stripped) < 10
+                        or any(pat.lower() in stripped.lower() for pat in _ERROR_PATTERNS)
+                    )
+
+                    if is_error:
+                        collected_failed.append(f"- {tool_name}: {stripped[:200] if stripped else '(빈 응답)'}")
+                    else:
                         if len(content) > 6000:
                             content = content[:6000] + "\n...(잘림)"
-                        collected_data.append(f"### {tool_name} 수집 결과:\n{content}")
+                        collected_valid.append(f"### {tool_name} 수집 결과:\n{content}")
 
             # 원래 사용자 질문 추출
             user_msg = ""
@@ -1071,21 +1099,34 @@ class BedrockAgent:
                     user_msg = m.content if isinstance(m.content, str) else str(m.content)
                     break
 
-            if collected_data:
-                data_text = "\n\n".join(collected_data)
-                report_input = (
-                    f"질문: {user_msg}\n\n"
-                    f"## 수집된 데이터:\n{data_text}\n\n"
-                    f"위 데이터를 기반으로 리포트를 작성하세요."
-                )
-            else:
-                report_input = (
-                    f"질문: {user_msg}\n\n"
-                    f"수집된 데이터가 없습니다. 가능한 범위에서 답변해주세요."
+            # 리포트 입력 구성: 유효 데이터와 실패 목록을 명확히 분리
+            parts = [f"질문: {user_msg}\n"]
+
+            if collected_failed:
+                parts.append(
+                    "## ⚠️ 수집 실패 항목 (아래 항목의 데이터는 존재하지 않음 — 추측하거나 지어내지 말 것):\n"
+                    + "\n".join(collected_failed)
                 )
 
-            logger.info(f"[Report] 리포트 작성 시작 (유형: {query_type}, "
-                        f"수집 데이터 {len(collected_data)}건)")
+            if collected_valid:
+                parts.append(
+                    "## 수집된 데이터 (리포트는 아래 데이터만 기반으로 작성할 것):\n"
+                    + "\n\n".join(collected_valid)
+                )
+                parts.append("위 데이터를 기반으로 리포트를 작성하세요.")
+            else:
+                parts.append(
+                    "## 수집된 유효 데이터가 없습니다.\n"
+                    "데이터가 없으므로 원인 분석이나 상태 판단이 불가능합니다.\n"
+                    "수집에 실패했다는 사실과 재시도 안내만 작성하세요. 절대로 내용을 추측하거나 지어내지 마세요."
+                )
+
+            report_input = "\n\n".join(parts)
+
+            logger.info(
+                f"[Report] 리포트 작성 시작 (유형: {query_type}, "
+                f"유효 데이터 {len(collected_valid)}건, 실패 {len(collected_failed)}건)"
+            )
 
             # 기존 메시지를 모두 교체 → 리포트 작성용 깨끗한 컨텍스트
             return {"messages": [
