@@ -572,61 +572,127 @@ class SubAgentTool(BaseTool):
         raise NotImplementedError("Use async version")
 
 
-# ── Main Agent (BedrockAgent) ──────────────────────────────────
+# ── Main Agent 프롬프트 (단계별) ──────────────────────────────
 
-def _build_main_agent_prompt(enforced_time_window: tuple[str, str] | None = None) -> str:
-    """Main Agent 시스템 프롬프트 (통합)"""
+# 질문 유형 분류
+_CLASSIFY_TYPES = {
+    "incident": "장애/알람 분석",
+    "status": "현황/상태 조회",
+    "general": "일반 질문 (인사, 지식 등)",
+}
+
+
+def _build_classify_prompt() -> str:
+    """Phase 1: 질문 유형 분류 프롬프트 (최소)"""
+    return "\n".join([
+        "You are a classifier. Classify the user question into one type.",
+        "Respond with ONLY the type name, nothing else.",
+        "",
+        "Types:",
+        "- incident: 장애, 알람, 에러, 재시작, OOM, 트러블슈팅, 원인 분석",
+        "- status: 현황 조회, 리소스 목록, 상태 확인, 메트릭 조회",
+        "- general: 인사, 일반 지식, 이전 대화 관련 질문",
+    ])
+
+
+def _build_collect_prompt(enforced_time_window: tuple[str, str] | None = None) -> str:
+    """Phase 2: 데이터 수집 단계 프롬프트 (리포트 양식 없음)"""
     time_info = _get_current_time_info()
 
     lines = [
-        "You are Olly, an AI assistant for infrastructure observability.",
+        "You are Olly, an infrastructure data collector.",
+        "Your job: call sub-agents to gather data. Do NOT write reports.",
         "Always respond in Korean (한국어).",
         "",
         time_info,
         "",
-        "## Architecture",
-        "You are the Main Agent. You do NOT call AWS/Grafana/CloudWatch tools directly.",
-        "Delegate to sub-agents:",
+        "## Sub-Agents (도구)",
         "• collect_metrics — Grafana PromQL 메트릭 수집",
         "• collect_logs — CloudWatch Logs 로그 수집",
         "• check_resources — AWS 리소스 상태 확인 (EC2, EKS, RDS, ALB 등)",
         "• investigate_network — 네트워크 연결 문제 조사 (VPC, TGW, SG, NACL)",
         "",
-        "## Workflow",
-        "1. 질문 분석 → 필요한 데이터 판단",
-        "2. sub-agent 호출. 서로 다른 sub-agent는 한 턴에 병렬 호출.",
-        "   같은 sub-agent를 2번 호출하지 말 것 — 하나의 task에 모든 요청을 담아라.",
-        "3. 수집된 데이터에서 핵심만 추출하여 리포트 작성.",
+        "## Rules",
+        "- 서로 다른 sub-agent는 한 턴에 병렬 호출.",
+        "- 같은 sub-agent를 2번 호출하지 말 것 — 하나의 task에 모든 요청을 담아라.",
+        "- task에 리소스 ID, 시간 범위, 리전, 계정 정보를 구체적으로 포함.",
+        "- 시간: 사용자 시간은 KST(UTC+9). 미지정 시 최근 30분.",
         "",
-        "Sub-agent 호출 시 task에 리소스 ID, 시간 범위, 리전, 계정 정보를 구체적으로 포함.",
-        "인사/일반 지식/이미 수집된 데이터 관련 질문은 sub-agent 없이 직접 답변.",
-        "",
-        "## Sub-Agent Selection (원칙 기반)",
+        "## Sub-Agent Selection",
         "• 메트릭/성능/사용률 → collect_metrics",
         "• 에러/로그/이벤트 → collect_logs",
         "• 리소스 상태/구성/목록 → check_resources",
         "• 연결/통신/라우팅 문제 → investigate_network",
         "• 장애 분석 → 관련 sub-agent 복수 병렬 호출 (메트릭+로그+리소스)",
         "",
-        "## Response Rules",
-        "• 시간: 사용자 시간은 KST(UTC+9). 미지정 시 최근 30분.",
-        "• 반환 금지: sub-agent 원문을 그대로 복사하지 말 것. 핵심만 요약.",
-        "• 할루시네이션 금지: sub-agent 출력에 없는 데이터를 만들지 말 것.",
-        "  - 확인된 사항 → '확인된 사항:', 분석 의견 → '분석 의견:', 불확실 → '확인 필요'",
-        "• 최종 리포트는 3000자 이내로 간결하게.",
-        "",
-        "## Report Format",
-        "상황에 맞게 아래 구조를 사용. 마크다운 테이블 대신 bullet list 사용.",
-        "",
-        "현황 조회: 📊 인프라 현황 리포트",
-        "  🕐 조회 시간 (KST/UTC) → 🎯 대상 → 리소스 요약 → 주요 메트릭 → 특이사항",
-        "",
-        "장애 분석: 🔍 장애 분석 리포트",
-        "  🕐 분석 시간 → 🎯 대상 → 📅 기간 → 현상 요약 → 메트릭 분석 → 로그 분석",
-        "  → 원인 분석 → 조치 방안 (🔴긴급 / 🟡권장 / 🟢참고)",
+        "## After Collection",
+        "수집이 끝나면 수집된 데이터를 정리하여 반환. 분석/리포트 작성은 하지 말 것.",
     ]
 
+    if enforced_time_window:
+        s_utc, e_utc = enforced_time_window
+        s_dt = datetime.strptime(s_utc, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        e_dt = datetime.strptime(e_utc, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        kst = timezone(timedelta(hours=9))
+        s_kst = s_dt.astimezone(kst).strftime("%Y-%m-%d %H:%M:%S")
+        e_kst = e_dt.astimezone(kst).strftime("%Y-%m-%d %H:%M:%S")
+        lines.extend([
+            "",
+            "## ENFORCED TIME RANGE",
+            f"UTC: {s_utc} ~ {e_utc} / KST: {s_kst} ~ {e_kst}",
+            "Sub-agent 호출 시 이 시간 범위를 task에 포함.",
+        ])
+
     return "\n".join(lines)
+
+
+def _build_report_prompt(report_type: str) -> str:
+    """Phase 3: 리포트 작성 프롬프트 (수집된 데이터 기반)"""
+    time_info = _get_current_time_info()
+
+    base = [
+        "You are Olly, an infrastructure report writer.",
+        "Always respond in Korean (한국어).",
+        "",
+        time_info,
+        "",
+        "## Rules",
+        "• sub-agent 원문을 그대로 복사하지 말 것. 핵심만 요약.",
+        "• 할루시네이션 금지: 수집된 데이터에 없는 내용을 만들지 말 것.",
+        "  - 확인된 사항 → '확인된 사항:', 분석 의견 → '분석 의견:', 불확실 → '확인 필요'",
+        "• 최종 리포트는 3000자 이내로 간결하게.",
+        "• 마크다운 테이블 대신 bullet list 사용.",
+    ]
+
+    if report_type == "incident":
+        base.extend([
+            "",
+            "## Report Format: 🔍 장애 분석 리포트",
+            "🕐 분석 시간 → 🎯 대상 → 📅 기간 → 현상 요약 → 메트릭 분석 → 로그 분석",
+            "→ 원인 분석 → 조치 방안 (🔴긴급 / 🟡권장 / 🟢참고)",
+        ])
+    elif report_type == "status":
+        base.extend([
+            "",
+            "## Report Format: 📊 인프라 현황 리포트",
+            "🕐 조회 시간 (KST/UTC) → 🎯 대상 → 리소스 요약 → 주요 메트릭 → 특이사항",
+        ])
+
+    return "\n".join(base)
+
+
+def _build_general_prompt() -> str:
+    """일반 질문용 최소 프롬프트"""
+    time_info = _get_current_time_info()
+    return "\n".join([
+        "You are Olly, an AI assistant for infrastructure observability.",
+        "Always respond in Korean (한국어).",
+        "",
+        time_info,
+        "",
+        "인프라, AWS, 모니터링 관련 질문에 답변하세요.",
+        "모르는 내용은 솔직하게 '확인이 필요합니다'라고 답변.",
+    ])
 
 
 class BedrockAgent:
@@ -773,28 +839,96 @@ class BedrockAgent:
         return descs.get(role, "Sub-agent")
 
     def _build_main_graph(self) -> Any:
-        """Main Agent용 LangGraph 워크플로우"""
+        """Main Agent용 3단계 LangGraph 워크플로우
+        
+        classify → collect (sub-agent 루프) → report → END
+                 → direct_answer → END (일반 질문)
+        """
+        main_llm = self._main_llm
+        main_llm_with_tools = self._main_llm_with_tools
+        main_tools = self._main_tools
 
-        async def agent_node(state: MessagesState) -> MessagesState:
+        # ── Phase 1: 질문 유형 분류 ──
+        async def classify_node(state: MessagesState) -> MessagesState:
+            """질문 유형을 분류하여 라우팅 결정"""
+            # 마지막 사용자 메시지 추출
+            user_msg = ""
+            for m in reversed(state["messages"]):
+                if isinstance(m, HumanMessage):
+                    user_msg = m.content if isinstance(m.content, str) else str(m.content)
+                    break
+
+            classify_prompt = _build_classify_prompt()
+            response = await main_llm.ainvoke([
+                SystemMessage(content=classify_prompt),
+                HumanMessage(content=user_msg),
+            ])
+            result = response.content.strip().lower() if isinstance(response.content, str) else ""
+
+            # 분류 결과를 메타데이터로 전달 (SystemMessage로 삽입)
+            if "incident" in result:
+                query_type = "incident"
+            elif "status" in result:
+                query_type = "status"
+            else:
+                query_type = "general"
+
+            logger.info(f"[Classify] 질문 유형: {query_type} (LLM 응답: {result[:50]})")
+
+            # 분류 결과를 state에 SystemMessage로 추가
+            return {"messages": [
+                SystemMessage(content=f"__QUERY_TYPE__:{query_type}")
+            ]}
+
+        def route_after_classify(state: MessagesState) -> str:
+            """분류 결과에 따라 다음 노드 결정"""
+            for m in reversed(state["messages"]):
+                if isinstance(m, SystemMessage) and isinstance(m.content, str):
+                    if m.content.startswith("__QUERY_TYPE__:"):
+                        qtype = m.content.split(":")[1]
+                        if qtype in ("incident", "status"):
+                            return "collect"
+                        return "direct_answer"
+            return "direct_answer"
+
+        # ── Phase 2: 데이터 수집 (sub-agent 호출 루프) ──
+        async def collect_setup_node(state: MessagesState) -> MessagesState:
+            """수집 단계 시작: 수집용 시스템 프롬프트로 교체"""
+            # 분류 메타에서 시간 범위 추출
+            time_window = None
+            for m in state["messages"]:
+                if isinstance(m, SystemMessage) and isinstance(m.content, str):
+                    if m.content.startswith("__TIME_WINDOW__:"):
+                        parts = m.content.split(":", 1)[1].split(",")
+                        if len(parts) == 2:
+                            time_window = (parts[0], parts[1])
+
+            collect_prompt = _build_collect_prompt(time_window)
+            return {"messages": [
+                SystemMessage(content=f"__PHASE__:collect"),
+                SystemMessage(content=collect_prompt),
+            ]}
+
+        async def collect_agent_node(state: MessagesState) -> MessagesState:
+            """수집 에이전트: sub-agent 도구를 호출"""
             messages = state["messages"]
-            response = await self._main_llm_with_tools.ainvoke(messages)
+            response = await main_llm_with_tools.ainvoke(messages)
             return {"messages": [response]}
 
-        async def tools_node(state: MessagesState) -> MessagesState:
+        async def collect_tools_node(state: MessagesState) -> MessagesState:
             """Sub-agent 호출을 병렬 실행"""
             messages = state["messages"]
             last_message = messages[-1]
             if not (hasattr(last_message, 'tool_calls') and last_message.tool_calls):
                 return {"messages": []}
 
-            # 도구 매핑 (이름 → 도구 객체)
-            tool_map = {tool.name: tool for tool in self._main_tools}
+            tool_map = {tool.name: tool for tool in main_tools}
 
             async def _dispatch_one(tool_call):
                 tool_name = tool_call["name"]
                 tool_args = tool_call["args"]
                 tool_id = tool_call["id"]
-                logger.info(f"[Main] Dispatching to sub-agent: {tool_name}")
+                logger.info(f"[Collect] Dispatching to sub-agent: {tool_name}")
                 matched = tool_map.get(tool_name)
                 if not matched:
                     return ToolMessage(content="Sub-agent not found.",
@@ -803,11 +937,11 @@ class BedrockAgent:
                     result = await matched.ainvoke(tool_args)
                 except Exception as e:
                     result = f"Sub-agent error: {str(e)}"
-                    logger.error(f"[Main] Sub-agent error: {e}")
+                    logger.error(f"[Collect] Sub-agent error: {e}")
                 return ToolMessage(content=str(result),
                                    name=tool_name, tool_call_id=tool_id)
 
-            # 같은 sub-agent 중복 호출 방지: 동일 이름은 첫 번째만 실행
+            # 같은 sub-agent 중복 호출 방지
             seen_tools: dict[str, dict] = {}
             unique_calls = []
             for tc in last_message.tool_calls:
@@ -816,14 +950,13 @@ class BedrockAgent:
                     seen_tools[name] = tc
                     unique_calls.append(tc)
                 else:
-                    logger.warning(f"[Main] 중복 sub-agent 호출 차단: {name}")
+                    logger.warning(f"[Collect] 중복 sub-agent 호출 차단: {name}")
 
-            # 중복 제거된 호출만 병렬 실행
             tool_messages = await asyncio.gather(
                 *[_dispatch_one(tc) for tc in unique_calls]
             )
 
-            # 차단된 중복 호출에 대해서도 ToolMessage 반환 (LangGraph 요구사항)
+            # 차단된 중복 호출에도 ToolMessage 반환
             for tc in last_message.tool_calls:
                 if tc not in unique_calls:
                     tool_messages = list(tool_messages) + [
@@ -836,19 +969,126 @@ class BedrockAgent:
 
             return {"messages": list(tool_messages)}
 
-        def should_continue(state: MessagesState) -> str:
+        def should_continue_collecting(state: MessagesState) -> str:
+            """수집 에이전트가 추가 도구 호출이 필요한지 판단"""
             messages = state["messages"]
             last_message = messages[-1]
             if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
-                return "tools"
-            return END
+                return "collect_tools"
+            return "report_setup"
 
+        # ── Phase 3: 리포트 작성 ──
+        # report_llm: 도구 없는 LLM (리포트 작성 전용)
+        report_llm = main_llm
+
+        async def report_setup_node(state: MessagesState) -> MessagesState:
+            """수집된 데이터를 정리하여 리포트 작성용 메시지로 재구성"""
+            # 질문 유형 추출
+            query_type = "status"
+            for m in state["messages"]:
+                if isinstance(m, SystemMessage) and isinstance(m.content, str):
+                    if m.content.startswith("__QUERY_TYPE__:"):
+                        query_type = m.content.split(":")[1]
+
+            report_prompt = _build_report_prompt(query_type)
+
+            # 수집된 데이터 추출 (ToolMessage들)
+            collected_data = []
+            for m in state["messages"]:
+                if isinstance(m, ToolMessage):
+                    tool_name = m.name or "unknown"
+                    content = str(m.content) if m.content else ""
+                    if content and len(content.strip()) > 5:
+                        if len(content) > 6000:
+                            content = content[:6000] + "\n...(잘림)"
+                        collected_data.append(f"### {tool_name} 수집 결과:\n{content}")
+
+            # 원래 사용자 질문 추출
+            user_msg = ""
+            for m in state["messages"]:
+                if isinstance(m, HumanMessage):
+                    user_msg = m.content if isinstance(m.content, str) else str(m.content)
+                    break
+
+            if collected_data:
+                data_text = "\n\n".join(collected_data)
+                report_input = (
+                    f"질문: {user_msg}\n\n"
+                    f"## 수집된 데이터:\n{data_text}\n\n"
+                    f"위 데이터를 기반으로 리포트를 작성하세요."
+                )
+            else:
+                report_input = (
+                    f"질문: {user_msg}\n\n"
+                    f"수집된 데이터가 없습니다. 가능한 범위에서 답변해주세요."
+                )
+
+            logger.info(f"[Report] 리포트 작성 시작 (유형: {query_type}, "
+                        f"수집 데이터 {len(collected_data)}건)")
+
+            # 기존 메시지를 모두 교체 → 리포트 작성용 깨끗한 컨텍스트
+            return {"messages": [
+                SystemMessage(content=report_prompt),
+                HumanMessage(content=report_input),
+            ]}
+
+        async def report_llm_node(state: MessagesState) -> MessagesState:
+            """리포트 LLM 호출 (스트리밍 가능)
+            
+            report_setup_node가 추가한 SystemMessage + HumanMessage만 사용.
+            수집 과정의 중간 메시지는 제외하여 토큰 절약.
+            """
+            # report_setup_node가 추가한 마지막 SystemMessage + HumanMessage 추출
+            report_messages = []
+            for m in reversed(state["messages"]):
+                if isinstance(m, (SystemMessage, HumanMessage)):
+                    report_messages.insert(0, m)
+                    if isinstance(m, SystemMessage):
+                        break  # 리포트 프롬프트(SystemMessage)까지 찾으면 중단
+
+            if not report_messages:
+                # 폴백: 전체 메시지 사용
+                report_messages = state["messages"]
+
+            response = await report_llm.ainvoke(report_messages)
+            return {"messages": [response]}
+
+        # ── 일반 질문 직접 답변 ──
+        async def direct_answer_node(state: MessagesState) -> MessagesState:
+            """일반 질문에 직접 답변 (sub-agent 호출 없음)"""
+            general_prompt = _build_general_prompt()
+            # 기존 메시지에서 시스템 프롬프트를 교체
+            messages = [SystemMessage(content=general_prompt)]
+            for m in state["messages"]:
+                if isinstance(m, HumanMessage):
+                    messages.append(m)
+                elif isinstance(m, AIMessage):
+                    messages.append(m)
+
+            response = await main_llm.ainvoke(messages)
+            return {"messages": [response]}
+
+        # ── 그래프 조립 ──
         graph = StateGraph(MessagesState)
-        graph.add_node("agent", agent_node)
-        graph.add_node("tools", tools_node)
-        graph.add_edge(START, "agent")
-        graph.add_conditional_edges("agent", should_continue, {"tools": "tools", END: END})
-        graph.add_edge("tools", "agent")
+        graph.add_node("classify", classify_node)
+        graph.add_node("collect", collect_setup_node)
+        graph.add_node("collect_agent", collect_agent_node)
+        graph.add_node("collect_tools", collect_tools_node)
+        graph.add_node("report_setup", report_setup_node)
+        graph.add_node("report", report_llm_node)
+        graph.add_node("direct_answer", direct_answer_node)
+
+        graph.add_edge(START, "classify")
+        graph.add_conditional_edges("classify", route_after_classify,
+                                     {"collect": "collect", "direct_answer": "direct_answer"})
+        graph.add_edge("collect", "collect_agent")
+        graph.add_conditional_edges("collect_agent", should_continue_collecting,
+                                     {"collect_tools": "collect_tools", "report_setup": "report_setup"})
+        graph.add_edge("collect_tools", "collect_agent")
+        graph.add_edge("report_setup", "report")
+        graph.add_edge("report", END)
+        graph.add_edge("direct_answer", END)
+
         return graph.compile()
 
     # ── 히스토리 / 토큰 관리 ──────────────────────────────────
@@ -1007,22 +1247,14 @@ class BedrockAgent:
     def _build_full_system_prompt(
         self, enforced_time_window: tuple[str, str] | None = None,
     ) -> str:
-        """Main Agent 전체 시스템 프롬프트 조합"""
-        base = _build_main_agent_prompt(enforced_time_window)
-        # 알람 시간 범위 강제 표시
+        """초기 시스템 프롬프트 (최소 — 분류 전 단계)"""
+        # phased 구조에서는 각 노드가 자체 프롬프트를 관리
+        # 여기서는 시간 범위 메타데이터만 전달
+        parts = []
         if enforced_time_window:
             s_utc, e_utc = enforced_time_window
-            s_dt = datetime.strptime(s_utc, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-            e_dt = datetime.strptime(e_utc, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-            kst = timezone(timedelta(hours=9))
-            s_kst = s_dt.astimezone(kst).strftime("%Y-%m-%d %H:%M:%S")
-            e_kst = e_dt.astimezone(kst).strftime("%Y-%m-%d %H:%M:%S")
-            base += (
-                f"\n\n## ENFORCED TIME RANGE\n"
-                f"UTC: {s_utc} ~ {e_utc} / KST: {s_kst} ~ {e_kst}\n"
-                f"Sub-agent 호출 시 이 시간 범위를 task에 포함. 리포트 분석 기간도 이 범위와 일치."
-            )
-        return base
+            parts.append(f"__TIME_WINDOW__:{s_utc},{e_utc}")
+        return "\n".join(parts) if parts else ""
 
     async def chat_stream(
         self, message: str, history: Optional[list[dict]] = None,
@@ -1087,8 +1319,9 @@ class BedrockAgent:
                                 yield {"type": "tool_start", "name": tool_name,
                                        "args": tc.get("args", {})}
 
-                    # Main Agent의 "agent" 노드에서 나온 텍스트 토큰만 전달
-                    if node == "agent" and isinstance(msg, AIMessageChunk):
+                    # report 또는 direct_answer 노드에서 나온 텍스트 토큰만 전달
+                    # collect_agent/classify 노드의 토큰은 중간 과정이므로 스트리밍 안 함
+                    if node in ("report", "direct_answer") and isinstance(msg, AIMessageChunk):
                         content = msg.content
                         if isinstance(content, str) and content:
                             if first_token_time is None:
