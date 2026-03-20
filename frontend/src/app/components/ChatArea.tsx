@@ -262,6 +262,14 @@ export default function ChatArea({ messages, isLoading, isStreaming }: ChatAreaP
                 <span>{msg.activeTools[msg.activeTools.length - 1]} 실행 중...</span>
               </div>
             )}
+            {/* 스트리밍 시작 직후 아직 내용이 없을 때 로딩 표시 */}
+            {msg.role === "assistant" && !msg.content && (!msg.activeTools || msg.activeTools.length === 0) && idx === messages.length - 1 && isStreaming && (
+              <div className="typing-indicator">
+                <span />
+                <span />
+                <span />
+              </div>
+            )}
             <Markdown
               remarkPlugins={[remarkGfm, remarkBreaks]}
               rehypePlugins={[rehypeRaw]}

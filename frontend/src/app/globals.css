@@ -463,14 +463,31 @@ body {
 .tool-activity {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
+  gap: 8px;
+  padding: 8px 12px;
   margin-bottom: 8px;
   font-size: 12px;
   color: var(--text-secondary);
   background-color: var(--bg-tertiary);
-  border-radius: 6px;
-  animation: pulse 1.5s ease-in-out infinite;
+  border-radius: 8px;
+  position: relative;
+  overflow: hidden;
+}
+
+.tool-activity::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, var(--accent-color), transparent);
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0% { left: -40%; }
+  100% { left: 100%; }
 }
 
 .tool-activity-icon {
@@ -517,16 +534,17 @@ body {
 /* 로딩 인디케이터 */
 .typing-indicator {
   display: flex;
-  gap: 5px;
-  padding: 8px 0;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 4px;
 }
 
 .typing-indicator span {
   width: 8px;
   height: 8px;
-  background-color: var(--text-muted);
+  background-color: var(--accent-color);
   border-radius: 50%;
-  animation: bounce 1.4s infinite ease-in-out both;
+  animation: typingBounce 1.4s infinite ease-in-out both;
 }
 
 .typing-indicator span:nth-child(1) {
@@ -537,14 +555,14 @@ body {
   animation-delay: -0.16s;
 }
 
-@keyframes bounce {
-  0%,
-  80%,
-  100% {
-    transform: scale(0);
+@keyframes typingBounce {
+  0%, 80%, 100% {
+    transform: scale(0.4);
+    opacity: 0.4;
   }
   40% {
     transform: scale(1);
+    opacity: 1;
   }
 }
 
