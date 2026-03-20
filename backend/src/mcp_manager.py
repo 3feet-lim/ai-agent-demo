@@ -42,6 +42,9 @@ class MCPServerConnection:
         self._streamable_context = None
         self._session_context = None
         self._connected = False
+        # MCP ClientSession은 동시 call_tool을 안전하게 처리하지 못할 수 있으므로
+        # 서버별 세마포어로 직렬화하여 세션 deadlock/hang 방지
+        self._call_semaphore = asyncio.Semaphore(1)
 
     @property
     def is_connected(self) -> bool:
@@ -183,17 +186,19 @@ class MCPServerConnection:
             return []
 
     async def call_tool(self, tool_name: str, arguments: dict) -> Any:
-        """도구 실행 (타임아웃 포함)"""
+        """도구 실행 (세마포어로 직렬화 + 타임아웃 포함)"""
         if not self._connected or not self._session:
             raise RuntimeError(f"MCP server {self.name} not connected")
 
         try:
-            # MCP 도구 호출에 120초 타임아웃 적용 (hang 방지)
-            result = await asyncio.wait_for(
-                self._session.call_tool(tool_name, arguments),
-                timeout=120.0
-            )
-            return result
+            async with self._call_semaphore:
+                logger.debug(f"[{self.name}] call_tool 세마포어 획득: {tool_name}")
+                # MCP 도구 호출에 120초 타임아웃 적용 (hang 방지)
+                result = await asyncio.wait_for(
+                    self._session.call_tool(tool_name, arguments),
+                    timeout=120.0
+                )
+                return result
         except asyncio.TimeoutError:
             logger.error(f"MCP tool {tool_name} on {self.name} timed out after 120s")
             raise TimeoutError(f"MCP tool {tool_name} timed out after 120s")
