@@ -531,6 +531,15 @@ body {
   font-family: "SF Mono", "Consolas", "Monaco", monospace;
 }
 
+/* 메시지 시간 표시 */
+.message-timestamp {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 6px;
+  text-align: right;
+  font-family: "SF Mono", "Consolas", "Monaco", monospace;
+}
+
 /* 로딩 인디케이터 */
 .typing-indicator {
   display: flex;

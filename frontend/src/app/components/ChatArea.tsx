@@ -43,6 +43,7 @@ interface Message {
   images?: string[];
   toolTrace?: string[];
   activeTools?: string[];
+  timestamp?: string;
 }
 
 interface ChatAreaProps {
@@ -343,6 +344,10 @@ export default function ChatArea({ messages, isLoading, isStreaming }: ChatAreaP
                   </ol>
                 </details>
               </div>
+            )}
+            {/* 메시지 시간 표시 */}
+            {msg.timestamp && (
+              <div className="message-timestamp">{msg.timestamp}</div>
             )}
           </div>
         </div>

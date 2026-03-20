@@ -37,12 +37,19 @@ function getUserId(): string {
   }
 }
 
+/** 현재 시각을 HH:MM:SS 형식으로 반환 */
+function nowTimestamp(): string {
+  const d = new Date();
+  return d.toLocaleTimeString("ko-KR", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
 interface Message {
   role: string;
   content: string;
   images?: string[];
   toolTrace?: string[];
   activeTools?: string[];
+  timestamp?: string;
 }
 
 interface Conversation {
@@ -131,7 +138,7 @@ export default function Home() {
   // 메시지 전송 (SSE 스트리밍)
   const handleSend = useCallback(
     async (content: string, images?: string[]) => {
-      setMessages((prev) => [...prev, { role: "user", content, images }]);
+      setMessages((prev) => [...prev, { role: "user", content, images, timestamp: nowTimestamp() }]);
       setIsLoading(true);
 
       try {
@@ -160,7 +167,7 @@ export default function Home() {
           // 빈 assistant 메시지 추가 후 스트리밍 시작
           setMessages((prev) => [
             ...prev,
-            { role: "assistant", content: "" },
+            { role: "assistant", content: "", timestamp: "" },
           ]);
           setIsLoading(false);
           setIsStreaming(true);
@@ -267,6 +274,16 @@ export default function Home() {
           }
 
           setIsStreaming(false);
+
+          // 스트리밍 완료 시 assistant 메시지에 응답 완료 시간 기록
+          setMessages((prev) => {
+            const updated = [...prev];
+            const last = updated[updated.length - 1];
+            if (last?.role === "assistant") {
+              updated[updated.length - 1] = { ...last, timestamp: nowTimestamp() };
+            }
+            return updated;
+          });
         } else {
           // JSON 폴백
           const data = await res.json();
@@ -277,7 +294,7 @@ export default function Home() {
 
           setMessages((prev) => [
             ...prev,
-            { role: "assistant", content: data.response },
+            { role: "assistant", content: data.response, timestamp: nowTimestamp() },
           ]);
         }
 
@@ -293,6 +310,7 @@ export default function Home() {
             content: isTimeout
               ? "응답 시간이 초과되었습니다. 질문을 더 구체적으로 해주시거나 다시 시도해주세요."
               : "메시지 전송에 실패했습니다. 다시 시도해주세요.",
+            timestamp: nowTimestamp(),
           },
         ]);
       } finally {
