@@ -183,13 +183,20 @@ class MCPServerConnection:
             return []
 
     async def call_tool(self, tool_name: str, arguments: dict) -> Any:
-        """도구 실행"""
+        """도구 실행 (타임아웃 포함)"""
         if not self._connected or not self._session:
             raise RuntimeError(f"MCP server {self.name} not connected")
 
         try:
-            result = await self._session.call_tool(tool_name, arguments)
+            # MCP 도구 호출에 120초 타임아웃 적용 (hang 방지)
+            result = await asyncio.wait_for(
+                self._session.call_tool(tool_name, arguments),
+                timeout=120.0
+            )
             return result
+        except asyncio.TimeoutError:
+            logger.error(f"MCP tool {tool_name} on {self.name} timed out after 120s")
+            raise TimeoutError(f"MCP tool {tool_name} timed out after 120s")
         except Exception as e:
             logger.error(f"Failed to call tool {tool_name} on {self.name}: {e}")
             raise

@@ -387,6 +387,7 @@ def _build_log_agent_prompt() -> str:
         "  /aws/lambda/{fn}, /aws/rds/instance/{id}/",
         "- EKS Container Insights 하위: application, dataplane, host, performance, flowlogs",
         "- 최대 20회 도구 호출. 모든 관련 로그 그룹을 확인할 때까지 '로그 없음' 결론 금지.",
+        "- describe_log_groups 호출 시 반드시 region 파라미터를 명시할 것. task에 리전 정보가 있으면 그 값을 사용.",
         "",
         "## Output: '로그 그룹: 이름' + '주요 에러: 메시지 — N회' 형태만 반환.",
     ])
@@ -558,7 +559,7 @@ class SubAgentTool(BaseTool):
 
     async def _arun(self, task: str) -> str:
         """Sub-agent 실행"""
-        logger.info(f"[Main→Sub] {self.name} 호출: {task[:200]}")
+        logger.info(f"[Main→Sub] {self.name} 호출: {task[:500]}")
         start = time.monotonic()
         result, tool_count = await _run_sub_agent(
             self.graph, self.system_prompt, task, self.recursion_limit
@@ -574,6 +575,8 @@ class SubAgentTool(BaseTool):
             f"[Main→Sub] {self.name} 완료: {elapsed:.1f}s, "
             f"MCP 도구 호출 {tool_count}회, 응답 {len(result)}자"
         )
+        # 디버깅용: 응답 앞부분 로깅
+        logger.debug(f"[Main→Sub] {self.name} 응답 미리보기: {result[:300]}")
         return result
 
     def _run(self, task: str) -> str:
