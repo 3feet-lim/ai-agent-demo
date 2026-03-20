@@ -191,7 +191,7 @@ class MCPToolWrapper(BaseTool):
                          "get_metric_data", "list_metrics", "describe_alarms"}
 
     def _inject_profile(self, kwargs: dict):
-        """resolved_profile을 MCP 도구 파라미터에 주입"""
+        """resolved_profile과 기본 region을 MCP 도구 파라미터에 주입"""
         profile = self.resolved_profile
         if not profile:
             return
@@ -200,11 +200,24 @@ class MCPToolWrapper(BaseTool):
             if not kwargs.get("profile_name"):
                 kwargs["profile_name"] = profile
                 logger.info(f"[Profile 주입] {self.name}: profile_name={profile}")
+            # CloudWatch 도구: region을 항상 기본 리전으로 강제
+            # (LLM이 잘못된 리전을 지정하면 폐쇄망에서 hang 발생)
+            if "region" in kwargs:
+                from src.config import get_settings
+                default_region = get_settings().aws_region
+                if kwargs["region"] != default_region:
+                    logger.info(f"[Region 강제] {self.name}: {kwargs['region']} → {default_region}")
+                    kwargs["region"] = default_region
         elif server_name == "aws-api" and "cli_command" in kwargs:
             cmd = kwargs["cli_command"]
             if "--profile" not in cmd:
                 kwargs["cli_command"] = f"{cmd} --profile {profile}"
                 logger.info(f"[Profile 주입] {self.name}: --profile {profile}")
+            # AWS CLI: --region이 없으면 기본 리전 추가
+            if "--region" not in cmd:
+                from src.config import get_settings
+                kwargs["cli_command"] = f"{kwargs['cli_command']} --region {get_settings().aws_region}"
+                logger.info(f"[Region 주입] {self.name}: --region {get_settings().aws_region}")
 
     _BLOCKED_AWS_COMMANDS = [
         "aws cloudwatch get-metric",
