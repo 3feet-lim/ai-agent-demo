@@ -281,6 +281,14 @@ class MCPToolWrapper(BaseTool):
                         logger.info(f"[시간 강제] call_aws CLI 시간 치환 완료")
                     kwargs["cli_command"] = cmd
 
+            # None 값 파라미터 제거 (MCP 서버가 타입 불일치로 거부)
+            kwargs = {k: v for k, v in kwargs.items() if v is not None}
+
+            # MCP 서버가 ctx를 필수로 요구하면 자동 주입
+            original_schema = self.mcp_tool.input_schema or {}
+            if "ctx" in original_schema.get("properties", {}):
+                kwargs.setdefault("ctx", {})
+
             logger.info(f"MCP tool {self.name} called with: {kwargs}")
             result = await self.mcp_manager.execute_tool(self.mcp_tool.name, kwargs)
 
