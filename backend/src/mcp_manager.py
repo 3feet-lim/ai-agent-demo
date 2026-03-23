@@ -175,13 +175,18 @@ class MCPServerConnection:
             tools = []
             for tool in result.tools:
                 schema = tool.inputSchema if hasattr(tool, 'inputSchema') else {}
-                # FastMCP ctx 파라미터가 input_schema에 포함되어 있는지 확인
+                # FastMCP의 ctx: Context는 서버가 자동 주입하는 파라미터.
+                # input_schema에 포함되어 있으면 클라이언트 측에서 제거하여
+                # LLM이 ctx를 보내지 않도록 한다.
                 props = schema.get("properties", {})
                 if "ctx" in props:
-                    logger.warning(
-                        f"[{self.name}] 도구 '{tool.name}'의 input_schema에 ctx 포함됨 — "
-                        f"FastMCP 버그로 추정, 클라이언트 측에서 제거 필요"
+                    logger.info(
+                        f"[{self.name}] 도구 '{tool.name}'의 input_schema에서 ctx 제거"
                     )
+                    del props["ctx"]
+                    req = schema.get("required", [])
+                    if "ctx" in req:
+                        req.remove("ctx")
                 tools.append(MCPTool(
                     name=tool.name,
                     description=tool.description or "",
