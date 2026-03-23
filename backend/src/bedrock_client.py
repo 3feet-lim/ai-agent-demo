@@ -373,6 +373,14 @@ def _build_metric_agent_prompt() -> str:
         "- query_prometheus: PromQL 쿼리 실행 (Grafana 데이터소스)",
         "- list_prometheus_metric_names: 사용 가능한 메트릭명 탐색",
         "",
+        "## CRITICAL: 사용자 지정 리소스명 우선 사용",
+        "- task 또는 [사용자 원본 요청]에 클러스터명, 인스턴스 ID 등 리소스 식별자가 명시되어 있으면",
+        "  반드시 해당 값을 PromQL label filter에 그대로 사용할 것.",
+        "- list_prometheus_label_values 등으로 탐색한 결과에서 다른 리소스를 임의로 선택하지 말 것.",
+        "- 사용자가 'fault-injection-lab-cluster'를 요청했으면 dimension_ClusterName=\"fault-injection-lab-cluster\"를 사용.",
+        "  다른 클러스터를 조회하는 것은 금지.",
+        "- 사용자 지정 리소스가 Prometheus에 존재하지 않으면, '해당 리소스의 메트릭을 찾을 수 없음'으로 보고.",
+        "",
         "## Rules",
         "- query_prometheus에 PromQL을 직접 전달. 대시보드 탐색 금지.",
         "- 메트릭명 모르면 list_prometheus_metric_names로 먼저 탐색.",
@@ -388,6 +396,12 @@ def _build_log_agent_prompt() -> str:
         "You are a Log Collection Agent. Collect logs and return raw data ONLY.",
         "Do NOT write reports, analysis, or recommendations.",
         "Respond in Korean.",
+        "",
+        "## CRITICAL: 사용자 지정 리소스명 우선 사용",
+        "- task 또는 [사용자 원본 요청]에 클러스터명, 인스턴스 ID, 함수명 등이 명시되어 있으면",
+        "  반드시 해당 값을 로그 그룹 탐색 접두사로 사용할 것.",
+        "- 다른 리소스의 로그를 임의로 조회하지 말 것.",
+        "- 사용자 지정 리소스의 로그 그룹이 없으면 '해당 리소스의 로그 그룹을 찾을 수 없음'으로 보고.",
         "",
         "## Rules",
         "- 로그 그룹명을 추측하지 말 것. 반드시 describe_log_groups로 먼저 탐색.",
@@ -407,6 +421,11 @@ def _build_resource_agent_prompt() -> str:
         "You are a Resource Status Agent. Check AWS resource status and return raw data ONLY.",
         "Do NOT write reports, analysis, or recommendations.",
         "Respond in Korean.",
+        "",
+        "## CRITICAL: 사용자 지정 리소스명 우선 사용",
+        "- task 또는 [사용자 원본 요청]에 클러스터명, 인스턴스 ID 등이 명시되어 있으면",
+        "  반드시 해당 리소스만 조회할 것. 다른 리소스를 임의로 조회하지 말 것.",
+        "- 사용자 지정 리소스가 존재하지 않으면 '해당 리소스를 찾을 수 없음'으로 보고.",
         "",
         "## Key Commands (call_aws)",
         "EKS: describe-cluster, list-nodegroups, describe-nodegroup",
@@ -431,6 +450,10 @@ def _build_network_agent_prompt() -> str:
         "You are a Network Troubleshooting Agent. Investigate connectivity and return raw findings ONLY.",
         "Do NOT write reports, analysis, or recommendations.",
         "Respond in Korean.",
+        "",
+        "## CRITICAL: 사용자 지정 리소스명 우선 사용",
+        "- task 또는 [사용자 원본 요청]에 VPC ID, 서브넷 ID, 클러스터명 등이 명시되어 있으면",
+        "  반드시 해당 리소스만 조사할 것. 다른 리소스를 임의로 조사하지 말 것.",
         "",
         "## Investigation Order (call_aws)",
         "1. 경로 식별: VPC, 서브넷, 연결 방식 (Peering/TGW/VPN/DX/IGW)",
@@ -984,12 +1007,13 @@ class BedrockAgent:
                 tool_args = dict(tool_call["args"])
                 tool_id = tool_call["id"]
 
-                # sub-agent task에 사용자 원본 메시지를 첨부
+                # sub-agent task에 사용자 원본 메시지를 첨부 (task 앞에 배치하여 우선순위 확보)
                 if user_original and "task" in tool_args:
                     tool_args["task"] = (
-                        f"{tool_args['task']}\n\n"
-                        f"[사용자 원본 요청 — 리소스 ID/이름 등 핵심 정보를 반드시 참고]\n"
-                        f"{user_original}"
+                        f"## MANDATORY TARGET (사용자 원본 요청 — 아래 리소스명/ID만 조회할 것, 다른 리소스 조회 금지)\n"
+                        f"{user_original}\n\n"
+                        f"---\n"
+                        f"{tool_args['task']}"
                     )
 
                 logger.info(f"[Collect] Dispatching to sub-agent: {tool_name}")
