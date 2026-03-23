@@ -649,6 +649,7 @@ def _build_extract_prompt(known_aliases: list[str] | None = None) -> str:
         "## OUTPUT SCHEMA",
         '{',
         '  "identifiers": ["리소스 이름/ID를 있는 그대로 추출 (list of strings)"],',
+        '  "identifier_types": {"리소스명": "cluster|pod|instance|db|function|unknown"},',
         '  "service_hint": "어떤 AWS 서비스인지 힌트 (eks|ecs|ec2|rds|lambda|s3|alb|general)",',
         '  "account_ref": "계정 참조 문자열 (예: 운영계정, prod 등). 없으면 null",',
         '  "regions": ["AWS 리전 (예: ap-northeast-2). 없으면 빈 배열"],',
@@ -657,31 +658,42 @@ def _build_extract_prompt(known_aliases: list[str] | None = None) -> str:
         "",
         "## RULES",
         "1. identifiers에는 리소스 이름/ID만 넣을 것. 계정 별칭, 리전, 시간은 넣지 말 것.",
-        "2. service_hint는 메시지 맥락에서 추론. 확실하지 않으면 'general'.",
-        "3. account_ref는 '운영계정', 'prod', '스테이징' 등 계정을 지칭하는 표현.",
-        "4. instance ID 패턴(i-xxx)도 identifiers에 포함.",
-        "5. pod 이름도 identifiers에 포함 (서비스 힌트는 eks).",
+        "2. identifier_types: 각 identifier가 클러스터명인지 pod명인지 구분. 모르면 'unknown'.",
+        "3. service_hint는 메시지 맥락에서 추론. 확실하지 않으면 'general'.",
+        "4. account_ref는 '운영계정', 'prod', '스테이징' 등 계정을 지칭하는 표현.",
+        "5. instance ID 패턴(i-xxx)도 identifiers에 포함.",
         "6. 리소스 이름이 없으면 identifiers는 빈 배열.",
+        "",
+        "## 알람 메시지 파싱 규칙",
+        "알람 형식: [FIRING][severity][provider][account/env][AlertName]resource-name (namespace) 설명",
+        "- 대괄호 안의 값들은 메타데이터. 리소스 이름이 아님.",
+        "- [account/env] 부분 (예: kbpsandbox-dev-mgmt)은 account_ref에 넣을 것.",
+        "- AlertName 뒤의 값이 실제 리소스 이름 (pod명, 인스턴스명 등).",
+        "- PodRestartDetected, OOMKilled 등 알람명에 Pod가 포함되면 → identifier_types는 'pod'.",
+        "- (default), (kube-system) 등 괄호 안은 Kubernetes namespace.",
         alias_section,
         "## EXAMPLES",
         "",
         "Input: 'fault-injection-lab-cluster 클러스터에 문제가 있는지 확인해줘'",
-        'Output: {"identifiers": ["fault-injection-lab-cluster"], "service_hint": "eks", "account_ref": null, "regions": [], "time_range": null}',
+        'Output: {"identifiers": ["fault-injection-lab-cluster"], "identifier_types": {"fault-injection-lab-cluster": "cluster"}, "service_hint": "eks", "account_ref": null, "regions": [], "time_range": null}',
         "",
         "Input: '운영계정의 my-rds-instance 상태 확인해줘'",
-        'Output: {"identifiers": ["my-rds-instance"], "service_hint": "rds", "account_ref": "운영계정", "regions": [], "time_range": null}',
+        'Output: {"identifiers": ["my-rds-instance"], "identifier_types": {"my-rds-instance": "db"}, "service_hint": "rds", "account_ref": "운영계정", "regions": [], "time_range": null}',
         "",
         "Input: 'ap-northeast-2 리전의 i-0abc123 인스턴스 상태 확인'",
-        'Output: {"identifiers": ["i-0abc123"], "service_hint": "ec2", "account_ref": null, "regions": ["ap-northeast-2"], "time_range": null}',
+        'Output: {"identifiers": ["i-0abc123"], "identifier_types": {"i-0abc123": "instance"}, "service_hint": "ec2", "account_ref": null, "regions": ["ap-northeast-2"], "time_range": null}',
         "",
-        "Input: 'nginx-pod가 재시작되고 있어'",
-        'Output: {"identifiers": ["nginx-pod"], "service_hint": "eks", "account_ref": null, "regions": [], "time_range": null}',
+        "Input: '[FIRING][critical][AWS][kbpsandbox-dev-mgmt][PodRestartDetected]memory-stress (default) 재시작 감지'",
+        'Output: {"identifiers": ["memory-stress"], "identifier_types": {"memory-stress": "pod"}, "service_hint": "eks", "account_ref": "kbpsandbox-dev-mgmt", "regions": [], "time_range": null}',
+        "",
+        "Input: '[FIRING][warning][AWS][prod-account][HighCPUUtilization]web-server-cluster CPU 90% 초과'",
+        'Output: {"identifiers": ["web-server-cluster"], "identifier_types": {"web-server-cluster": "cluster"}, "service_hint": "eks", "account_ref": "prod-account", "regions": [], "time_range": null}',
         "",
         "Input: '전체 EKS 클러스터 현황 알려줘'",
-        'Output: {"identifiers": [], "service_hint": "eks", "account_ref": null, "regions": [], "time_range": null}',
+        'Output: {"identifiers": [], "identifier_types": {}, "service_hint": "eks", "account_ref": null, "regions": [], "time_range": null}',
         "",
         "Input: 'fault-injection-lab-cluster랑 staging-cluster 둘 다 확인해줘'",
-        'Output: {"identifiers": ["fault-injection-lab-cluster", "staging-cluster"], "service_hint": "eks", "account_ref": null, "regions": [], "time_range": null}',
+        'Output: {"identifiers": ["fault-injection-lab-cluster", "staging-cluster"], "identifier_types": {"fault-injection-lab-cluster": "cluster", "staging-cluster": "cluster"}, "service_hint": "eks", "account_ref": null, "regions": [], "time_range": null}',
     ])
 
 
@@ -1254,12 +1266,15 @@ class BedrockAgent:
             confirmed_targets = []
             failed_targets = []
 
-            # pod 이름 패턴 감지 (service_hint가 eks이고 클러스터명 패턴이 아닌 경우)
             _INSTANCE_ID_PATTERN = re.compile(r'^i-[0-9a-f]{8,17}$')
-            _POD_NAME_INDICATORS = ["-pod", "-deploy", "-sts", "-rs-"]
+
+            # extract에서 LLM이 판별한 identifier_types 활용
+            identifier_types = extracted.get("identifier_types", {})
 
             for identifier in identifiers:
-                # EC2 인스턴스 ID 패턴
+                id_type = identifier_types.get(identifier, "unknown")
+
+                # EC2 인스턴스 ID 패턴 (정규식으로 확실히 판별)
                 if _INSTANCE_ID_PATTERN.match(identifier):
                     result = await _validate_single_resource_via_mcp("ec2", identifier, profile, region)
                     if result["exists"]:
@@ -1268,24 +1283,25 @@ class BedrockAgent:
                         failed_targets.append(result)
                     continue
 
-                # pod 이름 가능성 체크 → PromQL로 클러스터 역추적
-                is_pod_like = (
-                    service_hint == "eks"
-                    and any(ind in identifier.lower() for ind in _POD_NAME_INDICATORS)
-                )
-                if is_pod_like:
+                # LLM이 pod로 판별한 경우 → PromQL로 클러스터 역추적
+                if id_type == "pod":
                     cluster_name = await _resolve_pod_to_cluster_via_promql(identifier)
                     if cluster_name:
-                        # 클러스터 존재 확인
                         result = await _validate_single_resource_via_mcp("eks", cluster_name, profile, region)
                         if result["exists"]:
                             confirmed_targets.append({
                                 "type": "cluster", "name": cluster_name,
-                                "pod_filter": identifier,  # 이 클러스터에서 이 pod만 조회
+                                "pod_filter": identifier,
                             })
                             continue
+                    # PromQL 역추적 실패 → 실패로 기록하되 pod임을 명시
+                    failed_targets.append({
+                        "name": identifier, "type": "pod",
+                        "detail": f"pod '{identifier}'가 속한 클러스터를 찾을 수 없습니다. Prometheus에 메트릭이 없거나 pod가 존재하지 않습니다."
+                    })
+                    continue
 
-                # service_hint 기반 직접 검증
+                # 클러스터 또는 기타 리소스 → service_hint 기반 직접 검증
                 result = await _validate_single_resource_via_mcp(service_hint, identifier, profile, region)
                 if result["exists"]:
                     type_map = {"eks": "cluster", "ecs": "cluster", "ec2": "instance",
@@ -1295,7 +1311,19 @@ class BedrockAgent:
                         "name": identifier,
                     })
                 else:
-                    # service_hint가 틀렸을 수 있으니 eks로 한번 더 시도
+                    # 클러스터로 검증 실패 → pod일 수 있으니 PromQL 역추적 시도
+                    if service_hint == "eks" and id_type in ("unknown", "cluster"):
+                        cluster_name = await _resolve_pod_to_cluster_via_promql(identifier)
+                        if cluster_name:
+                            cluster_result = await _validate_single_resource_via_mcp("eks", cluster_name, profile, region)
+                            if cluster_result["exists"]:
+                                confirmed_targets.append({
+                                    "type": "cluster", "name": cluster_name,
+                                    "pod_filter": identifier,
+                                })
+                                continue
+
+                    # eks가 아닌 경우 eks로 한번 더 시도
                     if service_hint != "eks":
                         fallback = await _validate_single_resource_via_mcp("eks", identifier, profile, region)
                         if fallback["exists"]:
