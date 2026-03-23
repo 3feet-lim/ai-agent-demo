@@ -111,8 +111,11 @@ def build_plan_prompt(
         "- 로그/메트릭 수집 전에 관련 리소스 정보를 먼저 조회해야 한다.",
         "  resource agent로 대상 리소스의 상세 정보와 관련 리소스(로그 그룹, 노드그룹 등)를 먼저 확인.",
         "  그 결과를 다음 step의 log/metric agent에 전달하여 정확한 리소스명으로 조회하도록 한다.",
-        "  예: EKS 장애 → resource(클러스터 상태 + describe-log-groups로 관련 로그 그룹 조회) → log + metric 병렬.",
-        "- 로그 그룹 이름, 메트릭 네임스페이스 등은 절대 추측하지 말 것. 반드시 resource agent로 먼저 조회.",
+        "  예: EKS 장애 → resource(클러스터 상태 + 로그 그룹 조회) → log + metric 병렬.",
+        "- 🚨 로그 그룹 조회 시 prefix를 추측하지 말 것.",
+        "  describe-log-groups 호출 시 log_group_name_prefix에 특정 경로 패턴을 넣지 말고,",
+        "  클러스터/리소스 이름을 키워드로 검색하거나 prefix 없이 전체 조회 후 필터링할 것.",
+        "  task_template 예시: 'describe-log-groups를 호출하여 {리소스명}과 관련된 로그 그룹을 찾으세요. prefix를 추측하지 말고 넓은 범위로 조회하세요.'",
         "- 리소스 ID를 이미 알고 있는 경우: 바로 해당 agent 호출.",
         "- 네트워크 문제: resource(VPC/서브넷 정보) → network(경로 조사) 순서.",
         "",
@@ -142,10 +145,12 @@ def build_plan_prompt(
         '  {"step_id": 0, "agents": ["resource"], "purpose": "EKS 클러스터 상태 조회 및 관련 로그 그룹 탐색", '
         '"task_template": "EKS 클러스터 my-cluster의 상태를 확인하세요. '
         'describe-cluster, list-nodegroups, describe-nodegroup을 호출하세요. '
-        '그리고 describe-log-groups를 호출하여 my-cluster와 관련된 모든 로그 그룹을 조회하세요. '
+        '그리고 describe-log-groups를 호출하여 my-cluster와 관련된 로그 그룹을 찾으세요. '
+        'prefix를 추측하지 말고 log_group_name_prefix 없이 호출하거나 클러스터 이름만으로 조회하세요. '
         'profile: default, region: ap-northeast-2", "depends_on": null},',
         '  {"step_id": 1, "agents": ["log", "metric"], "purpose": "로그 수집 + 메트릭 수집 (병렬)", '
-        '"task_template": "이전 단계에서 확인된 로그 그룹 이름을 사용하여 최근 30분간 에러 로그를 검색하세요. '
+        '"task_template": "이전 단계에서 확인된 정확한 로그 그룹 이름을 사용하여 최근 30분간 에러 로그를 검색하세요. '
+        '로그 그룹 이름을 추측하지 말고 이전 단계 결과에서 확인된 이름만 사용하세요. '
         '메트릭은 CPU, 메모리, Pod 재시작 횟수를 조회하세요. cluster=my-cluster", "depends_on": 0}',
         "]}",
         "",
