@@ -295,6 +295,9 @@ class MCPToolWrapper(BaseTool):
             else:
                 raw = str(result)
 
+            # MCP 응답 결과 로깅 (디버깅용, 앞부분만)
+            logger.info(f"MCP tool {self.name} result ({len(raw)}자): {raw[:500]}")
+
             # storedBytes는 AWS API가 부정확한 값(0)을 반환하는 경우가 있어
             # LLM이 이를 근거로 로그 없음 판단을 내리는 것을 방지
             if self.name == "describe_log_groups":
