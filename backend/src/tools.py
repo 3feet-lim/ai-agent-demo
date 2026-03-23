@@ -139,6 +139,45 @@ class MCPToolWrapper(BaseTool):
         stats_header = "\n".join(summary_parts)
         return f"===STATS===\n{stats_header}\n===END STATS===\n\n{raw}"
 
+    @staticmethod
+    def _strip_stored_bytes(raw: str) -> str:
+        """describe_log_groups 응답에서 storedBytes 필드를 제거.
+
+        AWS API가 실제 로그가 존재하는 로그 그룹에 대해서도
+        storedBytes=0을 반환하는 경우가 있어, LLM이 이를 근거로
+        '로그 없음'으로 잘못 판단하는 것을 방지한다.
+        """
+        try:
+            data = json.loads(raw)
+            changed = False
+            if isinstance(data, dict):
+                # {"logGroups": [...]} 형태
+                for key, val in data.items():
+                    if isinstance(val, list):
+                        for item in val:
+                            if isinstance(item, dict) and "storedBytes" in item:
+                                del item["storedBytes"]
+                                changed = True
+                # 최상위에 storedBytes가 있는 경우
+                if "storedBytes" in data:
+                    del data["storedBytes"]
+                    changed = True
+            elif isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict) and "storedBytes" in item:
+                        del item["storedBytes"]
+                        changed = True
+            if changed:
+                logger.info("[storedBytes 제거] describe_log_groups 응답에서 storedBytes 필드 제거 완료")
+                return json.dumps(data, ensure_ascii=False)
+        except (json.JSONDecodeError, TypeError):
+            # JSON 파싱 실패 시 정규식으로 제거
+            stripped = re.sub(r',?\s*"storedBytes"\s*:\s*\d+', '', raw)
+            if stripped != raw:
+                logger.info("[storedBytes 제거] 정규식으로 storedBytes 필드 제거 완료")
+                return stripped
+        return raw
+
     _CW_PROFILE_TOOLS = {"list_log_groups", "get_log_events", "start_live_tail",
                          "filter_log_events", "start_query", "get_query_results",
                          "get_metric_data", "list_metrics", "describe_alarms"}
@@ -255,6 +294,11 @@ class MCPToolWrapper(BaseTool):
                 raw = "\n".join(contents)
             else:
                 raw = str(result)
+
+            # storedBytes는 AWS API가 부정확한 값(0)을 반환하는 경우가 있어
+            # LLM이 이를 근거로 로그 없음 판단을 내리는 것을 방지
+            if self.name == "describe_log_groups":
+                raw = self._strip_stored_bytes(raw)
 
             enriched = self._enrich_with_stats(raw)
 
