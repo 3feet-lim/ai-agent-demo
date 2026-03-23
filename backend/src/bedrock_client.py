@@ -625,38 +625,6 @@ _CLASSIFY_TYPES = {
 }
 
 
-def _extract_resource_ids_regex(text: str) -> dict[str, list[str]]:
-    """사용자 메시지에서 AWS 리소스 식별자를 regex로 추출 (deterministic).
-
-    Returns:
-        {"instance_ids": [...], "vpc_ids": [...], "subnet_ids": [...], ...}
-    """
-    # 앞쪽: 문자열 시작 또는 공백만 허용 (하이픈 뒤 오매칭 방지)
-    # 뒤쪽: \b 유지 (단어 끝 경계)
-    patterns = {
-        "instance_ids": r'(?:^|(?<=\s))i-[0-9a-f]{8,17}\b',
-        "ami_ids": r'(?:^|(?<=\s))ami-[0-9a-f]{8,17}\b',
-        "vpc_ids": r'(?:^|(?<=\s))vpc-[0-9a-f]{8,17}\b',
-        "subnet_ids": r'(?:^|(?<=\s))subnet-[0-9a-f]{8,17}\b',
-        "sg_ids": r'(?:^|(?<=\s))sg-[0-9a-f]{8,17}\b',
-        "eni_ids": r'(?:^|(?<=\s))eni-[0-9a-f]{8,17}\b',
-        "nat_gw_ids": r'(?:^|(?<=\s))nat-[0-9a-f]{8,17}\b',
-        "igw_ids": r'(?:^|(?<=\s))igw-[0-9a-f]{8,17}\b',
-        "tgw_ids": r'(?:^|(?<=\s))tgw-[0-9a-f]{8,17}\b',
-        "elb_ids": r'\b(?:app|net)/[A-Za-z0-9\-]+/[0-9a-f]+\b',
-        "rds_ids": r'(?:^|(?<=\s))(?:db|cluster)-[A-Za-z0-9\-]{1,63}\b',
-        "lambda_arns": r'\barn:aws:lambda:[a-z0-9\-]+:\d{12}:function:[A-Za-z0-9_\-]+\b',
-        "account_ids": r'(?:^|(?<=\s))\d{12}(?=\s|$)',
-        "regions": r'\b(?:us|eu|ap|sa|ca|me|af)-(?:north|south|east|west|central|northeast|southeast|northwest|southwest)-\d\b',
-    }
-    result = {}
-    for key, pattern in patterns.items():
-        matches = list(set(re.findall(pattern, text)))
-        if matches:
-            result[key] = matches
-    return result
-
-
 def _build_extract_prompt() -> str:
     """사용자 메시지에서 리소스 이름/식별자를 추출하는 LLM 프롬프트"""
     return "\n".join([
@@ -969,12 +937,10 @@ class BedrockAgent:
         main_llm_with_tools = self._main_llm_with_tools
         main_tools = self._main_tools
 
-        # ── Phase 0: 리소스 식별자 추출 (deterministic + LLM hybrid) ──
+        # ── Phase 0: 리소스 식별자 추출 (LLM 기반) ──
         async def extract_node(state: MessagesState) -> MessagesState:
-            """사용자 메시지에서 리소스 식별자를 추출하여 state에 주입.
+            """사용자 메시지에서 리소스 식별자를 LLM으로 추출하여 state에 주입.
 
-            regex로 AWS 리소스 ID 패턴을 먼저 추출하고,
-            LLM으로 자유 형식 이름(클러스터명 등)을 추출한다.
             결과를 __RESOURCE_CONTEXT__ SystemMessage로 state에 저장.
             """
             user_msg = ""
@@ -986,11 +952,8 @@ class BedrockAgent:
             if not user_msg:
                 return {"messages": []}
 
-            # 1) regex 추출 (deterministic)
-            regex_ids = _extract_resource_ids_regex(user_msg)
-
-            # 2) LLM 추출 (자유 형식 이름)
-            llm_ids = {}
+            # LLM 추출
+            extracted = {}
             try:
                 extract_prompt = _build_extract_prompt()
                 response = await main_llm.ainvoke([
@@ -1002,26 +965,16 @@ class BedrockAgent:
                 json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', raw, re.DOTALL)
                 if json_match:
                     raw = json_match.group(1)
-                llm_ids = json.loads(raw)
-                if not isinstance(llm_ids, dict):
-                    llm_ids = {}
+                extracted = json.loads(raw)
+                if not isinstance(extracted, dict):
+                    extracted = {}
             except Exception as e:
-                logger.warning(f"[Extract] LLM 추출 실패 (무시하고 regex 결과만 사용): {e}")
+                logger.warning(f"[Extract] LLM 추출 실패: {e}")
 
-            # 3) 병합: regex 결과 + LLM 결과 (regex가 우선, LLM은 보완)
-            merged = {**llm_ids}
-            for key, values in regex_ids.items():
-                if key in merged:
-                    # 중복 제거하며 병합
-                    existing = set(merged[key]) if isinstance(merged[key], list) else set()
-                    merged[key] = list(existing | set(values))
-                else:
-                    merged[key] = values
-
-            if merged:
-                logger.info(f"[Extract] 추출된 리소스 식별자: {json.dumps(merged, ensure_ascii=False)}")
+            if extracted:
+                logger.info(f"[Extract] 추출된 리소스 식별자: {json.dumps(extracted, ensure_ascii=False)}")
                 return {"messages": [
-                    SystemMessage(content=f"__RESOURCE_CONTEXT__:{json.dumps(merged, ensure_ascii=False)}")
+                    SystemMessage(content=f"__RESOURCE_CONTEXT__:{json.dumps(extracted, ensure_ascii=False)}")
                 ]}
             else:
                 logger.info("[Extract] 추출된 리소스 식별자 없음")
@@ -1068,9 +1021,203 @@ class BedrockAgent:
                     if m.content.startswith("__QUERY_TYPE__:"):
                         qtype = m.content.split(":")[1]
                         if qtype in ("incident", "status_list", "status_summary"):
-                            return "collect"
+                            return "validate"
                         return "direct_answer"
             return "direct_answer"
+
+        # ── Phase 1.5: 리소스 존재 검증 (MCP call_aws 직접 호출, LLM 없음) ──
+        mcp_manager = self._mcp_manager
+        profile_resolver = self._profile_resolver
+        default_region = self.region
+
+        async def _validate_resource_via_mcp(
+            resource_type: str, resource_name: str, profile: str, region: str
+        ) -> dict:
+            """MCP call_aws로 리소스 존재 여부를 확인. LLM 개입 없음.
+
+            Returns:
+                {"name": str, "type": str, "exists": bool, "detail": str}
+            """
+            # 리소스 타입별 AWS CLI 명령어 매핑
+            cli_commands = {
+                "cluster": f"aws eks describe-cluster --name {resource_name} --profile {profile} --region {region}",
+                "instance": f"aws ec2 describe-instances --instance-ids {resource_name} --profile {profile} --region {region}",
+                "db": f"aws rds describe-db-instances --db-instance-identifier {resource_name} --profile {profile} --region {region}",
+                "function": f"aws lambda get-function --function-name {resource_name} --profile {profile} --region {region}",
+            }
+
+            cmd = cli_commands.get(resource_type)
+            if not cmd:
+                return {"name": resource_name, "type": resource_type, "exists": False, "detail": "지원하지 않는 리소스 타입"}
+
+            try:
+                result = await mcp_manager.execute_tool("call_aws", {"cli_command": cmd})
+                # MCP 응답에서 텍스트 추출
+                if hasattr(result, 'content'):
+                    text = "\n".join(
+                        item.text if hasattr(item, 'text') else str(item)
+                        for item in result.content
+                    )
+                else:
+                    text = str(result)
+
+                # 에러 패턴 확인
+                error_patterns = [
+                    "ResourceNotFoundException", "ClusterNotFoundException",
+                    "DBInstanceNotFound", "InvalidInstanceID",
+                    "FunctionNotFound", "ResourceNotFoundFault",
+                    "No cluster found", "does not exist",
+                    "InvalidParameterValue", "not found",
+                ]
+                is_error = any(pat.lower() in text.lower() for pat in error_patterns)
+
+                if is_error:
+                    logger.info(f"[Validate] {resource_type} '{resource_name}' → 존재하지 않음")
+                    return {"name": resource_name, "type": resource_type, "exists": False, "detail": text[:200]}
+                else:
+                    logger.info(f"[Validate] {resource_type} '{resource_name}' → 존재 확인")
+                    return {"name": resource_name, "type": resource_type, "exists": True, "detail": ""}
+
+            except Exception as e:
+                logger.error(f"[Validate] {resource_type} '{resource_name}' 검증 실패: {e}")
+                return {"name": resource_name, "type": resource_type, "exists": False, "detail": str(e)}
+
+        async def validate_node(state: MessagesState) -> MessagesState:
+            """추출된 리소스의 존재 여부를 MCP call_aws로 검증.
+
+            존재하지 않는 리소스가 있으면 __VALIDATION_RESULT__에 기록.
+            리소스 컨텍스트가 없으면 (일반 현황 조회) 검증 스킵.
+            """
+            # __RESOURCE_CONTEXT__ 읽기
+            resource_json = ""
+            user_msg = ""
+            for m in state["messages"]:
+                if isinstance(m, SystemMessage) and isinstance(m.content, str):
+                    if m.content.startswith("__RESOURCE_CONTEXT__:"):
+                        resource_json = m.content.split(":", 1)[1]
+                if isinstance(m, HumanMessage):
+                    user_msg = m.content if isinstance(m.content, str) else str(m.content)
+
+            # 리소스 컨텍스트가 없으면 검증 스킵 → 바로 collect로
+            if not resource_json:
+                logger.info("[Validate] 리소스 컨텍스트 없음 → 검증 스킵")
+                return {"messages": [
+                    SystemMessage(content="__VALIDATION_RESULT__:skip")
+                ]}
+
+            try:
+                resources = json.loads(resource_json)
+            except json.JSONDecodeError:
+                logger.warning("[Validate] 리소스 컨텍스트 JSON 파싱 실패 → 검증 스킵")
+                return {"messages": [
+                    SystemMessage(content="__VALIDATION_RESULT__:skip")
+                ]}
+
+            # 프로필 결정
+            profile = profile_resolver.resolve(user_msg) if user_msg else "default"
+
+            # 리소스 타입별 검증 태스크 생성
+            validation_tasks = []
+            type_mapping = {
+                "cluster_names": "cluster",
+                "instance_ids": "instance",
+                "db_identifiers": "db",
+                "function_names": "function",
+            }
+
+            for field, resource_type in type_mapping.items():
+                names = resources.get(field, [])
+                if isinstance(names, list):
+                    for name in names:
+                        validation_tasks.append(
+                            _validate_resource_via_mcp(resource_type, name, profile, default_region)
+                        )
+
+            if not validation_tasks:
+                # 검증 가능한 리소스가 없음 (regions, time_range 등만 있는 경우)
+                logger.info("[Validate] 검증 가능한 리소스 없음 → 스킵")
+                return {"messages": [
+                    SystemMessage(content="__VALIDATION_RESULT__:skip")
+                ]}
+
+            # 병렬 검증 실행
+            results = await asyncio.gather(*validation_tasks)
+
+            valid = [r for r in results if r["exists"]]
+            invalid = [r for r in results if not r["exists"]]
+
+            validation_result = {
+                "valid": [{"name": r["name"], "type": r["type"]} for r in valid],
+                "invalid": [{"name": r["name"], "type": r["type"], "detail": r["detail"]} for r in invalid],
+            }
+
+            logger.info(
+                f"[Validate] 검증 완료: 존재 {len(valid)}건, 미존재 {len(invalid)}건"
+            )
+
+            return {"messages": [
+                SystemMessage(content=f"__VALIDATION_RESULT__:{json.dumps(validation_result, ensure_ascii=False)}")
+            ]}
+
+        def route_after_validate(state: MessagesState) -> str:
+            """검증 결과에 따라 collect 또는 direct_answer로 라우팅"""
+            for m in reversed(state["messages"]):
+                if isinstance(m, SystemMessage) and isinstance(m.content, str):
+                    if m.content.startswith("__VALIDATION_RESULT__:"):
+                        payload = m.content.split(":", 1)[1]
+
+                        # 스킵인 경우 → collect로 진행
+                        if payload == "skip":
+                            return "collect"
+
+                        try:
+                            result = json.loads(payload)
+                        except json.JSONDecodeError:
+                            return "collect"
+
+                        valid = result.get("valid", [])
+                        invalid = result.get("invalid", [])
+
+                        # 존재하는 리소스가 하나도 없으면 → direct_answer
+                        if not valid and invalid:
+                            return "direct_answer_validation_fail"
+
+                        # 존재하는 리소스가 있으면 → collect
+                        return "collect"
+            return "collect"
+
+        async def direct_answer_validation_fail_node(state: MessagesState) -> MessagesState:
+            """검증 실패 시 '리소스를 찾을 수 없습니다' 응답 생성"""
+            # 검증 결과에서 실패 목록 추출
+            invalid_list = []
+            for m in state["messages"]:
+                if isinstance(m, SystemMessage) and isinstance(m.content, str):
+                    if m.content.startswith("__VALIDATION_RESULT__:"):
+                        try:
+                            result = json.loads(m.content.split(":", 1)[1])
+                            invalid_list = result.get("invalid", [])
+                        except json.JSONDecodeError:
+                            pass
+
+            # 사용자 원본 메시지 추출
+            user_msg = ""
+            for m in state["messages"]:
+                if isinstance(m, HumanMessage):
+                    user_msg = m.content if isinstance(m.content, str) else str(m.content)
+                    break
+
+            # LLM 없이 코드로 응답 생성
+            lines = ["요청하신 리소스를 찾을 수 없습니다.\n"]
+            type_labels = {"cluster": "EKS 클러스터", "instance": "EC2 인스턴스", "db": "RDS 인스턴스", "function": "Lambda 함수"}
+            for item in invalid_list:
+                label = type_labels.get(item["type"], item["type"])
+                lines.append(f"- {label}: `{item['name']}` — 존재하지 않음")
+
+            lines.append("\n리소스 이름을 확인하고 다시 요청해주세요.")
+
+            return {"messages": [
+                AIMessage(content="\n".join(lines))
+            ]}
 
         # ── Phase 2: 데이터 수집 (sub-agent 호출 루프) ──
         async def collect_setup_node(state: MessagesState) -> MessagesState:
@@ -1329,17 +1476,21 @@ class BedrockAgent:
         graph = StateGraph(MessagesState)
         graph.add_node("extract", extract_node)
         graph.add_node("classify", classify_node)
+        graph.add_node("validate", validate_node)
         graph.add_node("collect", collect_setup_node)
         graph.add_node("collect_agent", collect_agent_node)
         graph.add_node("collect_tools", collect_tools_node)
         graph.add_node("report_setup", report_setup_node)
         graph.add_node("report", report_llm_node)
         graph.add_node("direct_answer", direct_answer_node)
+        graph.add_node("direct_answer_validation_fail", direct_answer_validation_fail_node)
 
         graph.add_edge(START, "extract")
         graph.add_edge("extract", "classify")
         graph.add_conditional_edges("classify", route_after_classify,
-                                     {"collect": "collect", "direct_answer": "direct_answer"})
+                                     {"validate": "validate", "direct_answer": "direct_answer"})
+        graph.add_conditional_edges("validate", route_after_validate,
+                                     {"collect": "collect", "direct_answer_validation_fail": "direct_answer_validation_fail"})
         graph.add_edge("collect", "collect_agent")
         graph.add_conditional_edges("collect_agent", should_continue_collecting,
                                      {"collect_tools": "collect_tools", "report_setup": "report_setup"})
@@ -1347,6 +1498,7 @@ class BedrockAgent:
         graph.add_edge("report_setup", "report")
         graph.add_edge("report", END)
         graph.add_edge("direct_answer", END)
+        graph.add_edge("direct_answer_validation_fail", END)
 
         return graph.compile()
 
