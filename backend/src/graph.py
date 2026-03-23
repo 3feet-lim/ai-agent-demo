@@ -55,6 +55,26 @@ def read_state_meta_json(state: MessagesState, key: str) -> Optional[dict]:
         return None
 
 
+def _extract_text_from_content(content) -> str:
+    """LLM 응답의 content에서 텍스트를 추출하는 유틸.
+
+    content가 str이면 그대로 반환.
+    content가 list (content blocks 형태)이면 text 블록들을 결합하여 반환.
+    예: [{'type': 'text', 'text': '...'}, ...] → 텍스트 결합
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                parts.append(block.get("text", ""))
+            elif isinstance(block, str):
+                parts.append(block)
+        return "\n".join(parts)
+    return str(content)
+
+
 def build_main_graph(
     main_llm,
     main_llm_with_tools,
@@ -120,7 +140,7 @@ def build_main_graph(
                 SystemMessage(content=analyze_prompt),
                 HumanMessage(content=user_msg),
             ])
-            raw = response.content.strip() if isinstance(response.content, str) else ""
+            raw = _extract_text_from_content(response.content).strip()
             # ```json ... ``` 블록이 있으면 추출
             json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', raw, re.DOTALL)
             if json_match:
@@ -252,7 +272,7 @@ def build_main_graph(
                 result = await main_llm_with_tools.ainvoke(resolve_messages)
 
             # 최종 응답에서 JSON 파싱
-            response_text = result.content if isinstance(result.content, str) else str(result.content)
+            response_text = _extract_text_from_content(result.content)
             json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response_text, re.DOTALL)
             if json_match:
                 resolve_result = json.loads(json_match.group(1))
@@ -330,7 +350,7 @@ def build_main_graph(
                 SystemMessage(content=plan_prompt),
                 HumanMessage(content="위 컨텍스트를 기반으로 실행 계획을 JSON으로 작성하세요."),
             ])
-            raw = response.content.strip() if isinstance(response.content, str) else ""
+            raw = _extract_text_from_content(response.content).strip()
             # ```json ... ``` 블록이 있으면 추출
             json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', raw, re.DOTALL)
             if json_match:
