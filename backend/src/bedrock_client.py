@@ -625,6 +625,62 @@ _CLASSIFY_TYPES = {
 }
 
 
+def _extract_resource_ids_regex(text: str) -> dict[str, list[str]]:
+    """사용자 메시지에서 AWS 리소스 식별자를 regex로 추출 (deterministic).
+
+    Returns:
+        {"instance_ids": [...], "vpc_ids": [...], "subnet_ids": [...], ...}
+    """
+    # 앞쪽: 문자열 시작 또는 공백만 허용 (하이픈 뒤 오매칭 방지)
+    # 뒤쪽: \b 유지 (단어 끝 경계)
+    patterns = {
+        "instance_ids": r'(?:^|(?<=\s))i-[0-9a-f]{8,17}\b',
+        "ami_ids": r'(?:^|(?<=\s))ami-[0-9a-f]{8,17}\b',
+        "vpc_ids": r'(?:^|(?<=\s))vpc-[0-9a-f]{8,17}\b',
+        "subnet_ids": r'(?:^|(?<=\s))subnet-[0-9a-f]{8,17}\b',
+        "sg_ids": r'(?:^|(?<=\s))sg-[0-9a-f]{8,17}\b',
+        "eni_ids": r'(?:^|(?<=\s))eni-[0-9a-f]{8,17}\b',
+        "nat_gw_ids": r'(?:^|(?<=\s))nat-[0-9a-f]{8,17}\b',
+        "igw_ids": r'(?:^|(?<=\s))igw-[0-9a-f]{8,17}\b',
+        "tgw_ids": r'(?:^|(?<=\s))tgw-[0-9a-f]{8,17}\b',
+        "elb_ids": r'\b(?:app|net)/[A-Za-z0-9\-]+/[0-9a-f]+\b',
+        "rds_ids": r'(?:^|(?<=\s))(?:db|cluster)-[A-Za-z0-9\-]{1,63}\b',
+        "lambda_arns": r'\barn:aws:lambda:[a-z0-9\-]+:\d{12}:function:[A-Za-z0-9_\-]+\b',
+        "account_ids": r'(?:^|(?<=\s))\d{12}(?=\s|$)',
+        "regions": r'\b(?:us|eu|ap|sa|ca|me|af)-(?:north|south|east|west|central|northeast|southeast|northwest|southwest)-\d\b',
+    }
+    result = {}
+    for key, pattern in patterns.items():
+        matches = list(set(re.findall(pattern, text)))
+        if matches:
+            result[key] = matches
+    return result
+
+
+def _build_extract_prompt() -> str:
+    """사용자 메시지에서 리소스 이름/식별자를 추출하는 LLM 프롬프트"""
+    return "\n".join([
+        "Extract resource identifiers from the user message.",
+        "Return ONLY a JSON object. No explanation.",
+        "",
+        "Fields (omit if not found):",
+        '- "cluster_names": EKS/ECS cluster names (list of strings)',
+        '- "service_names": service or application names (list of strings)',
+        '- "log_groups": CloudWatch log group names or prefixes (list of strings)',
+        '- "function_names": Lambda function names (list of strings)',
+        '- "db_identifiers": RDS instance/cluster identifiers (list of strings)',
+        '- "regions": AWS regions like ap-northeast-2 (list of strings)',
+        '- "time_range": time description like "최근 1시간", "어제" (string, optional)',
+        "",
+        "Example input: 'fault-injection-lab-cluster 클러스터에 문제가 있는지 확인해줘'",
+        'Example output: {"cluster_names": ["fault-injection-lab-cluster"]}',
+        "",
+        "Example input: 'ap-northeast-2 리전의 i-0abc123 인스턴스 상태 확인'",
+        'Example output: {"regions": ["ap-northeast-2"]}',
+        "(Note: instance IDs like i-xxx are extracted separately, don't include them)",
+    ])
+
+
 def _build_classify_prompt() -> str:
     """Phase 1: 질문 유형 분류 프롬프트 (최소)"""
     return "\n".join([
@@ -913,6 +969,64 @@ class BedrockAgent:
         main_llm_with_tools = self._main_llm_with_tools
         main_tools = self._main_tools
 
+        # ── Phase 0: 리소스 식별자 추출 (deterministic + LLM hybrid) ──
+        async def extract_node(state: MessagesState) -> MessagesState:
+            """사용자 메시지에서 리소스 식별자를 추출하여 state에 주입.
+
+            regex로 AWS 리소스 ID 패턴을 먼저 추출하고,
+            LLM으로 자유 형식 이름(클러스터명 등)을 추출한다.
+            결과를 __RESOURCE_CONTEXT__ SystemMessage로 state에 저장.
+            """
+            user_msg = ""
+            for m in reversed(state["messages"]):
+                if isinstance(m, HumanMessage):
+                    user_msg = m.content if isinstance(m.content, str) else str(m.content)
+                    break
+
+            if not user_msg:
+                return {"messages": []}
+
+            # 1) regex 추출 (deterministic)
+            regex_ids = _extract_resource_ids_regex(user_msg)
+
+            # 2) LLM 추출 (자유 형식 이름)
+            llm_ids = {}
+            try:
+                extract_prompt = _build_extract_prompt()
+                response = await main_llm.ainvoke([
+                    SystemMessage(content=extract_prompt),
+                    HumanMessage(content=user_msg),
+                ])
+                raw = response.content.strip() if isinstance(response.content, str) else ""
+                # JSON 블록 추출 (```json ... ``` 또는 순수 JSON)
+                json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', raw, re.DOTALL)
+                if json_match:
+                    raw = json_match.group(1)
+                llm_ids = json.loads(raw)
+                if not isinstance(llm_ids, dict):
+                    llm_ids = {}
+            except Exception as e:
+                logger.warning(f"[Extract] LLM 추출 실패 (무시하고 regex 결과만 사용): {e}")
+
+            # 3) 병합: regex 결과 + LLM 결과 (regex가 우선, LLM은 보완)
+            merged = {**llm_ids}
+            for key, values in regex_ids.items():
+                if key in merged:
+                    # 중복 제거하며 병합
+                    existing = set(merged[key]) if isinstance(merged[key], list) else set()
+                    merged[key] = list(existing | set(values))
+                else:
+                    merged[key] = values
+
+            if merged:
+                logger.info(f"[Extract] 추출된 리소스 식별자: {json.dumps(merged, ensure_ascii=False)}")
+                return {"messages": [
+                    SystemMessage(content=f"__RESOURCE_CONTEXT__:{json.dumps(merged, ensure_ascii=False)}")
+                ]}
+            else:
+                logger.info("[Extract] 추출된 리소스 식별자 없음")
+                return {"messages": []}
+
         # ── Phase 1: 질문 유형 분류 ──
         async def classify_node(state: MessagesState) -> MessagesState:
             """질문 유형을 분류하여 라우팅 결정"""
@@ -1000,6 +1114,14 @@ class BedrockAgent:
                     user_original = m.content if isinstance(m.content, str) else str(m.content)
                     break
 
+            # 추출된 리소스 식별자 가져오기 (extract_node에서 주입)
+            resource_context = ""
+            for m in messages:
+                if isinstance(m, SystemMessage) and isinstance(m.content, str):
+                    if m.content.startswith("__RESOURCE_CONTEXT__:"):
+                        resource_context = m.content.split(":", 1)[1]
+                        break
+
             tool_map = {tool.name: tool for tool in main_tools}
 
             async def _dispatch_one(tool_call):
@@ -1007,14 +1129,23 @@ class BedrockAgent:
                 tool_args = dict(tool_call["args"])
                 tool_id = tool_call["id"]
 
-                # sub-agent task에 사용자 원본 메시지를 첨부 (task 앞에 배치하여 우선순위 확보)
-                if user_original and "task" in tool_args:
-                    tool_args["task"] = (
-                        f"## MANDATORY TARGET (사용자 원본 요청 — 아래 리소스명/ID만 조회할 것, 다른 리소스 조회 금지)\n"
-                        f"{user_original}\n\n"
-                        f"---\n"
-                        f"{tool_args['task']}"
-                    )
+                # sub-agent task에 추출된 리소스 식별자 + 사용자 원본 메시지를 주입
+                if "task" in tool_args:
+                    prefix_parts = []
+                    if resource_context:
+                        prefix_parts.append(
+                            f"## MANDATORY TARGETS (코드에서 추출된 확정 값 — 반드시 이 리소스만 조회할 것)\n"
+                            f"{resource_context}"
+                        )
+                    if user_original:
+                        prefix_parts.append(
+                            f"## 사용자 원본 요청\n{user_original}"
+                        )
+                    if prefix_parts:
+                        tool_args["task"] = (
+                            "\n\n".join(prefix_parts)
+                            + f"\n\n---\n{tool_args['task']}"
+                        )
 
                 logger.info(f"[Collect] Dispatching to sub-agent: {tool_name}")
                 matched = tool_map.get(tool_name)
@@ -1196,6 +1327,7 @@ class BedrockAgent:
 
         # ── 그래프 조립 ──
         graph = StateGraph(MessagesState)
+        graph.add_node("extract", extract_node)
         graph.add_node("classify", classify_node)
         graph.add_node("collect", collect_setup_node)
         graph.add_node("collect_agent", collect_agent_node)
@@ -1204,7 +1336,8 @@ class BedrockAgent:
         graph.add_node("report", report_llm_node)
         graph.add_node("direct_answer", direct_answer_node)
 
-        graph.add_edge(START, "classify")
+        graph.add_edge(START, "extract")
+        graph.add_edge("extract", "classify")
         graph.add_conditional_edges("classify", route_after_classify,
                                      {"collect": "collect", "direct_answer": "direct_answer"})
         graph.add_edge("collect", "collect_agent")
