@@ -1732,7 +1732,7 @@ class BedrockAgent:
 
                     # report 또는 direct_answer 노드에서 나온 텍스트 토큰만 전달
                     # collect_agent/classify 노드의 토큰은 중간 과정이므로 스트리밍 안 함
-                    if node in ("report", "direct_answer") and isinstance(msg, AIMessageChunk):
+                    if node in ("report", "direct_answer", "direct_answer_validation_fail") and isinstance(msg, AIMessageChunk):
                         content = msg.content
                         if isinstance(content, str) and content:
                             if first_token_time is None:
@@ -1750,6 +1750,15 @@ class BedrockAgent:
                                             first_token_time = time.monotonic()
                                         token_count += 1
                                         yield {"type": "token", "content": text}
+
+                    # validate_fail 등 비스트리밍 노드의 완성된 AIMessage 처리
+                    if node in ("direct_answer_validation_fail",) and isinstance(msg, AIMessage) and not isinstance(msg, AIMessageChunk):
+                        content = msg.content
+                        if isinstance(content, str) and content:
+                            if first_token_time is None:
+                                first_token_time = time.monotonic()
+                            token_count += 1
+                            yield {"type": "token", "content": content}
 
                 # ToolMessage → sub-agent 완료
                 elif isinstance(msg, ToolMessage):
