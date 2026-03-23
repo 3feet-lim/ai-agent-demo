@@ -1,0 +1,115 @@
+"""
+통합 분석 프롬프트 (analyze_node)
+
+사용자 메시지에서 의도 분류 + 리소스 식별자 추출 + 필요 행동 판단을
+LLM 1회 호출로 수행합니다.
+"""
+
+
+def build_analyze_prompt(known_aliases: list[str] | None = None) -> str:
+    """사용자 메시지를 분석하여 의도, 식별자, 필요 행동을 한 번에 판단하는 프롬프트.
+
+    기존 extract_prompt + classify_prompt를 통합.
+    분류 카테고리는 하드코딩하지 않고 LLM이 자유롭게 판단하되,
+    라우팅에 필요한 행동 플래그를 별도로 출력.
+    """
+    alias_section = ""
+    if known_aliases:
+        alias_list = ", ".join(f'"{a}"' for a in known_aliases)
+        alias_section = "\n".join([
+            "",
+            "## KNOWN ACCOUNT ALIASES (계정 별칭 — 리소스 이름이 아님)",
+            f"다음은 AWS 계정 별칭입니다: [{alias_list}]",
+            "이 값들은 identifiers에 넣지 말고, account_ref에 넣으세요.",
+            "",
+        ])
+
+    return "\n".join([
+        "Analyze the user message and extract structured information.",
+        "Return ONLY a JSON object. No explanation, no markdown fence.",
+        "",
+        "## OUTPUT SCHEMA",
+        "{",
+        '  "intent": "사용자의 의도를 한국어로 간결하게 설명 (1~2문장)",',
+        '  "category": "자유 형식 카테고리 (예: general, resource_lookup, incident_analysis, status_inquiry, ...)",',
+        '  "identifiers": ["리소스 이름/ID를 있는 그대로 추출"],',
+        '  "identifier_types": {"리소스명": "cluster|pod|instance|db|function|unknown"},',
+        '  "service_hint": "eks|ecs|ec2|rds|lambda|s3|alb|general",',
+        '  "account_ref": "계정 참조 문자열 또는 null",',
+        '  "regions": ["AWS 리전. 없으면 빈 배열"],',
+        '  "time_range": "시간 범위 설명 또는 null",',
+        '  "requires_validation": true/false,',
+        '  "requires_data_collection": true/false,',
+        '  "collection_types": ["metric", "log", "resource", "network"]',
+        "}",
+        "",
+        "## FIELD RULES",
+        "",
+        "### intent & category",
+        "- intent: 사용자가 무엇을 원하는지 자연어로 설명.",
+        "- category: 자유 형식. 하드코딩 목록이 아님. 의도에 맞는 카테고리를 자유롭게 작성.",
+        "  예시: general, resource_lookup, incident_analysis, status_inquiry, metric_query, log_search, ...",
+        "",
+        "### identifiers & identifier_types",
+        "- identifiers: 리소스 이름/ID만. 계정 별칭, 리전, 시간은 넣지 말 것.",
+        "- identifier_types: 각 identifier가 cluster/pod/instance/db/function 중 무엇인지. 모르면 'unknown'.",
+        "- instance ID 패턴(i-xxx)도 identifiers에 포함.",
+        "- 리소스 이름이 없으면 identifiers는 빈 배열.",
+        "",
+        "### service_hint",
+        "- 메시지 맥락에서 추론. 확실하지 않으면 'general'.",
+        "",
+        "### account_ref",
+        "- '운영계정', 'prod', '스테이징' 등 계정을 지칭하는 표현.",
+        "",
+        "### requires_validation (라우팅 핵심 플래그)",
+        "- true: 특정 리소스를 지목했고, 해당 리소스가 실제 존재하는지 확인이 필요한 경우.",
+        "  → identifiers가 비어있지 않고, 장애 분석/상태 확인 등 리소스 특정 작업일 때.",
+        "- false: 일반 질문이거나, 전체 목록 조회처럼 특정 리소스 검증이 불필요한 경우.",
+        "",
+        "### requires_data_collection (라우팅 핵심 플래그)",
+        "- true: sub-agent를 통한 데이터 수집이 필요한 경우.",
+        "  → 메트릭 조회, 로그 검색, 리소스 상태 확인, 장애 분석 등.",
+        "- false: 일반 대화, 인사, 이전 대화 관련 질문 등 데이터 수집 불필요.",
+        "",
+        "### collection_types",
+        "- requires_data_collection이 true일 때만 의미 있음.",
+        "- 필요한 sub-agent 유형만 포함. 불필요한 것은 제외.",
+        '- 가능한 값: "metric", "log", "resource", "network"',
+        "- 장애 분석: 보통 metric + log + resource 필요.",
+        "- 리소스 목록 조회: resource만 필요.",
+        "- 메트릭 조회: metric만 필요.",
+        "- 네트워크 문제: network + resource 필요.",
+        "",
+        "## 알람 메시지 파싱 규칙",
+        "알람 형식: [FIRING][severity][provider][account/env][AlertName]resource-name (namespace) 설명",
+        "- 대괄호 안의 값들은 메타데이터. 리소스 이름이 아님.",
+        "- [account/env] 부분 (예: kbpsandbox-dev-mgmt)은 account_ref에 넣을 것.",
+        "- AlertName 뒤의 값이 실제 리소스 이름 (pod명, 인스턴스명 등).",
+        "- PodRestartDetected, OOMKilled 등 알람명에 Pod가 포함되면 → identifier_types는 'pod'.",
+        "- (default), (kube-system) 등 괄호 안은 Kubernetes namespace.",
+        "- 알람 메시지 → requires_validation=true, requires_data_collection=true.",
+        alias_section,
+        "## EXAMPLES",
+        "",
+        "Input: '안녕하세요'",
+        'Output: {"intent": "일반 인사", "category": "general", "identifiers": [], "identifier_types": {}, "service_hint": "general", "account_ref": null, "regions": [], "time_range": null, "requires_validation": false, "requires_data_collection": false, "collection_types": []}',
+        "",
+        "Input: 'fault-injection-lab-cluster 장애 분석해줘'",
+        'Output: {"intent": "EKS 클러스터 장애 분석 요청", "category": "incident_analysis", "identifiers": ["fault-injection-lab-cluster"], "identifier_types": {"fault-injection-lab-cluster": "cluster"}, "service_hint": "eks", "account_ref": null, "regions": [], "time_range": null, "requires_validation": true, "requires_data_collection": true, "collection_types": ["metric", "log", "resource"]}',
+        "",
+        "Input: 'EC2 인스턴스 목록 보여줘'",
+        'Output: {"intent": "EC2 인스턴스 전체 목록 조회", "category": "resource_lookup", "identifiers": [], "identifier_types": {}, "service_hint": "ec2", "account_ref": null, "regions": [], "time_range": null, "requires_validation": false, "requires_data_collection": true, "collection_types": ["resource"]}',
+        "",
+        "Input: '[FIRING][critical][AWS][kbpsandbox-dev-mgmt][PodRestartDetected]memory-stress (default) 재시작 감지'",
+        'Output: {"intent": "Pod 재시작 알람 분석", "category": "incident_analysis", "identifiers": ["memory-stress"], "identifier_types": {"memory-stress": "pod"}, "service_hint": "eks", "account_ref": "kbpsandbox-dev-mgmt", "regions": [], "time_range": null, "requires_validation": true, "requires_data_collection": true, "collection_types": ["metric", "log", "resource"]}',
+        "",
+        "Input: '운영계정의 my-rds-instance 상태 확인해줘'",
+        'Output: {"intent": "RDS 인스턴스 상태 확인", "category": "status_inquiry", "identifiers": ["my-rds-instance"], "identifier_types": {"my-rds-instance": "db"}, "service_hint": "rds", "account_ref": "운영계정", "regions": [], "time_range": null, "requires_validation": true, "requires_data_collection": true, "collection_types": ["resource"]}',
+        "",
+        "Input: '전체 EKS 클러스터 현황 알려줘'",
+        'Output: {"intent": "EKS 클러스터 전체 현황 조회", "category": "status_inquiry", "identifiers": [], "identifier_types": {}, "service_hint": "eks", "account_ref": null, "regions": [], "time_range": null, "requires_validation": false, "requires_data_collection": true, "collection_types": ["resource"]}',
+        "",
+        "Input: 'VPC 간 통신이 안 되는데 확인해줘. src: vpc-abc, dst: vpc-def'",
+        'Output: {"intent": "VPC 간 네트워크 통신 문제 조사", "category": "incident_analysis", "identifiers": ["vpc-abc", "vpc-def"], "identifier_types": {"vpc-abc": "unknown", "vpc-def": "unknown"}, "service_hint": "general", "account_ref": null, "regions": [], "time_range": null, "requires_validation": true, "requires_data_collection": true, "collection_types": ["network", "resource"]}',
+    ])
