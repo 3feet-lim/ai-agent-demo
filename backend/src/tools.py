@@ -29,12 +29,21 @@ from .time_utils import TIME_PARAM_MAP
 # ── 공통 유틸리티 ──────────────────────────────────────────────
 
 def create_pydantic_model_from_schema(name: str, schema: dict) -> type[BaseModel]:
-    """MCP input_schema에서 Pydantic 모델 동적 생성"""
+    """MCP input_schema에서 Pydantic 모델 동적 생성
+
+    MCP 서버 내부용 파라미터(ctx 등)는 LLM에 노출하지 않도록 필터링합니다.
+    """
     properties = schema.get("properties", {})
     required = set(schema.get("required", []))
 
+    # MCP 서버 내부용 파라미터 필터링 (LLM이 임의 값을 넣어 오류 유발)
+    _INTERNAL_PARAMS = {"ctx"}
+
     fields = {}
     for prop_name, prop_schema in properties.items():
+        if prop_name in _INTERNAL_PARAMS:
+            continue
+
         prop_type = prop_schema.get("type", "string")
         description = prop_schema.get("description", "")
 
@@ -44,7 +53,7 @@ def create_pydantic_model_from_schema(name: str, schema: dict) -> type[BaseModel
         }
         python_type = type_mapping.get(prop_type, Any)
 
-        if prop_name in required:
+        if prop_name in required and prop_name not in _INTERNAL_PARAMS:
             fields[prop_name] = (python_type, Field(description=description))
         else:
             fields[prop_name] = (Optional[python_type], Field(default=None, description=description))
