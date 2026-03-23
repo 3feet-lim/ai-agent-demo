@@ -138,6 +138,19 @@ class AccountProfileResolver:
                 return account
         return None
 
+    def get_known_aliases(self) -> list[str]:
+        """프롬프트 주입용: 모든 계정의 alias + matchers 목록 반환.
+
+        LLM이 계정 별칭을 리소스 이름으로 오인하지 않도록,
+        알려진 계정 참조 문자열을 모두 반환한다.
+        """
+        aliases = []
+        for account in self._accounts:
+            if account.alias:
+                aliases.append(account.alias)
+            aliases.extend(account.matchers)
+        return aliases
+
     @property
     def default_profile(self) -> str:
         return self._default_profile

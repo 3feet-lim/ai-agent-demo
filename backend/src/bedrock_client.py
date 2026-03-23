@@ -625,27 +625,63 @@ _CLASSIFY_TYPES = {
 }
 
 
-def _build_extract_prompt() -> str:
-    """사용자 메시지에서 리소스 이름/식별자를 추출하는 LLM 프롬프트"""
+def _build_extract_prompt(known_aliases: list[str] | None = None) -> str:
+    """사용자 메시지에서 리소스 식별자를 '있는 그대로' 추출하는 LLM 프롬프트.
+
+    기존 방식(cluster_names, function_names 등 타입별 분류)을 폐기하고,
+    식별자 후보를 그대로 추출 + 서비스 힌트만 판단하는 구조로 변경.
+    """
+    alias_section = ""
+    if known_aliases:
+        alias_list = ", ".join(f'"{a}"' for a in known_aliases)
+        alias_section = "\n".join([
+            "",
+            "## KNOWN ACCOUNT ALIASES (계정 별칭 — 리소스 이름이 아님)",
+            f"다음은 AWS 계정 별칭입니다: [{alias_list}]",
+            "이 값들은 identifiers에 넣지 말고, account_ref에 넣으세요.",
+            "",
+        ])
+
     return "\n".join([
         "Extract resource identifiers from the user message.",
         "Return ONLY a JSON object. No explanation.",
         "",
-        "Fields (omit if not found):",
-        '- "cluster_names": EKS/ECS cluster names (list of strings)',
-        '- "service_names": service or application names (list of strings)',
-        '- "log_groups": CloudWatch log group names or prefixes (list of strings)',
-        '- "function_names": Lambda function names (list of strings)',
-        '- "db_identifiers": RDS instance/cluster identifiers (list of strings)',
-        '- "regions": AWS regions like ap-northeast-2 (list of strings)',
-        '- "time_range": time description like "최근 1시간", "어제" (string, optional)',
+        "## OUTPUT SCHEMA",
+        '{',
+        '  "identifiers": ["리소스 이름/ID를 있는 그대로 추출 (list of strings)"],',
+        '  "service_hint": "어떤 AWS 서비스인지 힌트 (eks|ecs|ec2|rds|lambda|s3|alb|general)",',
+        '  "account_ref": "계정 참조 문자열 (예: 운영계정, prod 등). 없으면 null",',
+        '  "regions": ["AWS 리전 (예: ap-northeast-2). 없으면 빈 배열"],',
+        '  "time_range": "시간 범위 설명 (예: 최근 1시간). 없으면 null"',
+        '}',
         "",
-        "Example input: 'fault-injection-lab-cluster 클러스터에 문제가 있는지 확인해줘'",
-        'Example output: {"cluster_names": ["fault-injection-lab-cluster"]}',
+        "## RULES",
+        "1. identifiers에는 리소스 이름/ID만 넣을 것. 계정 별칭, 리전, 시간은 넣지 말 것.",
+        "2. service_hint는 메시지 맥락에서 추론. 확실하지 않으면 'general'.",
+        "3. account_ref는 '운영계정', 'prod', '스테이징' 등 계정을 지칭하는 표현.",
+        "4. instance ID 패턴(i-xxx)도 identifiers에 포함.",
+        "5. pod 이름도 identifiers에 포함 (서비스 힌트는 eks).",
+        "6. 리소스 이름이 없으면 identifiers는 빈 배열.",
+        alias_section,
+        "## EXAMPLES",
         "",
-        "Example input: 'ap-northeast-2 리전의 i-0abc123 인스턴스 상태 확인'",
-        'Example output: {"regions": ["ap-northeast-2"]}',
-        "(Note: instance IDs like i-xxx are extracted separately, don't include them)",
+        "Input: 'fault-injection-lab-cluster 클러스터에 문제가 있는지 확인해줘'",
+        'Output: {"identifiers": ["fault-injection-lab-cluster"], "service_hint": "eks", "account_ref": null, "regions": [], "time_range": null}',
+        "",
+        "Input: '운영계정의 my-rds-instance 상태 확인해줘'",
+        'Output: {"identifiers": ["my-rds-instance"], "service_hint": "rds", "account_ref": "운영계정", "regions": [], "time_range": null}',
+        "",
+        "Input: 'ap-northeast-2 리전의 i-0abc123 인스턴스 상태 확인'",
+        'Output: {"identifiers": ["i-0abc123"], "service_hint": "ec2", "account_ref": null, "regions": ["ap-northeast-2"], "time_range": null}',
+        "",
+        "Input: 'nginx-pod가 재시작되고 있어'",
+        'Output: {"identifiers": ["nginx-pod"], "service_hint": "eks", "account_ref": null, "regions": [], "time_range": null}',
+        "",
+        "Input: '전체 EKS 클러스터 현황 알려줘'",
+        'Output: {"identifiers": [], "service_hint": "eks", "account_ref": null, "regions": [], "time_range": null}',
+        "",
+        "Input: 'fault-injection-lab-cluster랑 staging-cluster 둘 다 확인해줘'",
+        'Output: {"identifiers": ["fault-injection-lab-cluster", "staging-cluster"], "service_hint": "eks", "account_ref": null, "regions": [], "time_range": null}',
     ])
 
 
@@ -937,11 +973,12 @@ class BedrockAgent:
         main_llm_with_tools = self._main_llm_with_tools
         main_tools = self._main_tools
 
-        # ── Phase 0: 리소스 식별자 추출 (LLM 기반) ──
+        # ── Phase 0: 리소스 식별자 추출 (LLM 기반, 새 구조) ──
         async def extract_node(state: MessagesState) -> MessagesState:
-            """사용자 메시지에서 리소스 식별자를 LLM으로 추출하여 state에 주입.
+            """사용자 메시지에서 리소스 식별자를 LLM으로 추출.
 
-            결과를 __RESOURCE_CONTEXT__ SystemMessage로 state에 저장.
+            새 구조: identifiers(후보 리스트) + service_hint + account_ref
+            결과를 __EXTRACT_RESULT__ SystemMessage로 state에 저장.
             """
             user_msg = ""
             for m in reversed(state["messages"]):
@@ -950,18 +987,21 @@ class BedrockAgent:
                     break
 
             if not user_msg:
-                return {"messages": []}
+                return {"messages": [
+                    SystemMessage(content=f"__EXTRACT_RESULT__:{json.dumps({})}")
+                ]}
 
-            # LLM 추출
+            # 계정 alias 목록을 프롬프트에 주입 → LLM이 계정명을 리소스로 오인 방지
+            known_aliases = profile_resolver.get_known_aliases()
+
             extracted = {}
             try:
-                extract_prompt = _build_extract_prompt()
+                extract_prompt = _build_extract_prompt(known_aliases)
                 response = await main_llm.ainvoke([
                     SystemMessage(content=extract_prompt),
                     HumanMessage(content=user_msg),
                 ])
                 raw = response.content.strip() if isinstance(response.content, str) else ""
-                # JSON 블록 추출 (```json ... ``` 또는 순수 JSON)
                 json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', raw, re.DOTALL)
                 if json_match:
                     raw = json_match.group(1)
@@ -971,14 +1011,10 @@ class BedrockAgent:
             except Exception as e:
                 logger.warning(f"[Extract] LLM 추출 실패: {e}")
 
-            if extracted:
-                logger.info(f"[Extract] 추출된 리소스 식별자: {json.dumps(extracted, ensure_ascii=False)}")
-                return {"messages": [
-                    SystemMessage(content=f"__RESOURCE_CONTEXT__:{json.dumps(extracted, ensure_ascii=False)}")
-                ]}
-            else:
-                logger.info("[Extract] 추출된 리소스 식별자 없음")
-                return {"messages": []}
+            logger.info(f"[Extract] 추출 결과: {json.dumps(extracted, ensure_ascii=False)}")
+            return {"messages": [
+                SystemMessage(content=f"__EXTRACT_RESULT__:{json.dumps(extracted, ensure_ascii=False)}")
+            ]}
 
         # ── Phase 1: 질문 유형 분류 ──
         async def classify_node(state: MessagesState) -> MessagesState:
@@ -1021,38 +1057,30 @@ class BedrockAgent:
                     if m.content.startswith("__QUERY_TYPE__:"):
                         qtype = m.content.split(":")[1]
                         if qtype in ("incident", "status_list", "status_summary"):
-                            return "validate"
+                            return "resolve"
                         return "direct_answer"
             return "direct_answer"
 
-        # ── Phase 1.5: 리소스 존재 검증 (MCP call_aws 직접 호출, LLM 없음) ──
+        # ── Phase 1.5: 리소스 해석 (resolve) — MCP로 실제 리소스 확인 ──
         mcp_manager = self._mcp_manager
         profile_resolver = self._profile_resolver
         default_region = self.region
 
-        async def _validate_resource_via_mcp(
-            resource_type: str, resource_name: str, profile: str, region: str
-        ) -> dict:
-            """MCP call_aws로 리소스 존재 여부를 확인. LLM 개입 없음.
-
-            Returns:
-                {"name": str, "type": str, "exists": bool, "detail": str}
-            """
-            # 리소스 타입별 AWS CLI 명령어 매핑
-            cli_commands = {
-                "cluster": f"aws eks describe-cluster --name {resource_name} --profile {profile} --region {region}",
-                "instance": f"aws ec2 describe-instances --instance-ids {resource_name} --profile {profile} --region {region}",
-                "db": f"aws rds describe-db-instances --db-instance-identifier {resource_name} --profile {profile} --region {region}",
-                "function": f"aws lambda get-function --function-name {resource_name} --profile {profile} --region {region}",
+        async def _list_resources_via_mcp(
+            service_hint: str, profile: str, region: str
+        ) -> list[str]:
+            """MCP call_aws로 해당 서비스의 리소스 목록을 조회. LLM 개입 없음."""
+            list_commands = {
+                "eks": f"aws eks list-clusters --profile {profile} --region {region}",
+                "rds": f"aws rds describe-db-instances --profile {profile} --region {region} --query 'DBInstances[].DBInstanceIdentifier'",
+                "lambda": f"aws lambda list-functions --profile {profile} --region {region} --query 'Functions[].FunctionName'",
             }
-
-            cmd = cli_commands.get(resource_type)
+            cmd = list_commands.get(service_hint)
             if not cmd:
-                return {"name": resource_name, "type": resource_type, "exists": False, "detail": "지원하지 않는 리소스 타입"}
+                return []
 
             try:
                 result = await mcp_manager.execute_tool("call_aws", {"cli_command": cmd})
-                # MCP 응답에서 텍스트 추출
                 if hasattr(result, 'content'):
                     text = "\n".join(
                         item.text if hasattr(item, 'text') else str(item)
@@ -1061,7 +1089,54 @@ class BedrockAgent:
                 else:
                     text = str(result)
 
-                # 에러 패턴 확인
+                # JSON 배열 파싱 시도
+                try:
+                    parsed = json.loads(text)
+                    if isinstance(parsed, dict):
+                        # eks list-clusters → {"clusters": [...]}
+                        for key in ("clusters", "Clusters", "DBInstances", "Functions"):
+                            if key in parsed:
+                                val = parsed[key]
+                                if isinstance(val, list):
+                                    return [str(v) for v in val]
+                    elif isinstance(parsed, list):
+                        return [str(v) for v in parsed]
+                except json.JSONDecodeError:
+                    pass
+
+                # 텍스트에서 이름 추출 시도 (줄 단위)
+                names = [line.strip().strip('"').strip("'").strip(",")
+                         for line in text.splitlines() if line.strip()]
+                return [n for n in names if n and len(n) > 1]
+
+            except Exception as e:
+                logger.error(f"[Resolve] 리소스 목록 조회 실패 ({service_hint}): {e}")
+                return []
+
+        async def _validate_single_resource_via_mcp(
+            resource_type: str, resource_name: str, profile: str, region: str
+        ) -> dict:
+            """MCP call_aws로 단일 리소스 존재 여부를 확인. LLM 개입 없음."""
+            cli_commands = {
+                "eks": f"aws eks describe-cluster --name {resource_name} --profile {profile} --region {region}",
+                "ec2": f"aws ec2 describe-instances --instance-ids {resource_name} --profile {profile} --region {region}",
+                "rds": f"aws rds describe-db-instances --db-instance-identifier {resource_name} --profile {profile} --region {region}",
+                "lambda": f"aws lambda get-function --function-name {resource_name} --profile {profile} --region {region}",
+            }
+            cmd = cli_commands.get(resource_type)
+            if not cmd:
+                return {"name": resource_name, "type": resource_type, "exists": False, "detail": "지원하지 않는 리소스 타입"}
+
+            try:
+                result = await mcp_manager.execute_tool("call_aws", {"cli_command": cmd})
+                if hasattr(result, 'content'):
+                    text = "\n".join(
+                        item.text if hasattr(item, 'text') else str(item)
+                        for item in result.content
+                    )
+                else:
+                    text = str(result)
+
                 error_patterns = [
                     "ResourceNotFoundException", "ClusterNotFoundException",
                     "DBInstanceNotFound", "InvalidInstanceID",
@@ -1072,157 +1147,235 @@ class BedrockAgent:
                 is_error = any(pat.lower() in text.lower() for pat in error_patterns)
 
                 if is_error:
-                    logger.info(f"[Validate] {resource_type} '{resource_name}' → 존재하지 않음")
+                    logger.info(f"[Resolve] {resource_type} '{resource_name}' → 존재하지 않음")
                     return {"name": resource_name, "type": resource_type, "exists": False, "detail": text[:200]}
                 else:
-                    logger.info(f"[Validate] {resource_type} '{resource_name}' → 존재 확인")
+                    logger.info(f"[Resolve] {resource_type} '{resource_name}' → 존재 확인")
                     return {"name": resource_name, "type": resource_type, "exists": True, "detail": ""}
 
             except Exception as e:
-                logger.error(f"[Validate] {resource_type} '{resource_name}' 검증 실패: {e}")
+                logger.error(f"[Resolve] {resource_type} '{resource_name}' 검증 실패: {e}")
                 return {"name": resource_name, "type": resource_type, "exists": False, "detail": str(e)}
 
-        async def validate_node(state: MessagesState) -> MessagesState:
-            """추출된 리소스의 존재 여부를 MCP call_aws로 검증.
+        async def _resolve_pod_to_cluster_via_promql(
+            pod_name: str,
+        ) -> str | None:
+            """PromQL로 pod가 속한 클러스터를 역추적.
 
-            존재하지 않는 리소스가 있으면 __VALIDATION_RESULT__에 기록.
-            리소스 컨텍스트가 없으면 (일반 현황 조회) 검증 스킵.
+            kube_pod_info{pod="xxx"} 메트릭의 cluster 라벨에서 클러스터명 추출.
             """
-            # __RESOURCE_CONTEXT__ 읽기
-            resource_json = ""
+            try:
+                # Grafana MCP의 query_prometheus 도구 사용
+                query = f'kube_pod_info{{pod=~"{pod_name}.*"}}'
+                result = await mcp_manager.execute_tool("query_prometheus", {
+                    "query": query,
+                })
+                if hasattr(result, 'content'):
+                    text = "\n".join(
+                        item.text if hasattr(item, 'text') else str(item)
+                        for item in result.content
+                    )
+                else:
+                    text = str(result)
+
+                # cluster 라벨 추출
+                cluster_match = re.search(r'cluster["\s:=]+["\']?([a-zA-Z0-9_\-]+)', text)
+                if cluster_match:
+                    cluster_name = cluster_match.group(1)
+                    logger.info(f"[Resolve] pod '{pod_name}' → 클러스터 '{cluster_name}' 역추적 성공")
+                    return cluster_name
+
+                logger.info(f"[Resolve] pod '{pod_name}' → 클러스터 역추적 실패 (메트릭 없음)")
+                return None
+            except Exception as e:
+                logger.warning(f"[Resolve] pod→cluster PromQL 역추적 실패: {e}")
+                return None
+
+        async def resolve_node(state: MessagesState) -> MessagesState:
+            """extract 결과를 실제 AWS 리소스와 대조하여 확정된 targets를 생성.
+
+            1. account_ref → profile 결정
+            2. identifiers + service_hint → 실제 리소스 존재 확인
+            3. pod 이름이면 → PromQL로 클러스터 역추적
+            4. 확정된 targets를 __RESOLVED_TARGETS__ SystemMessage로 저장
+
+            targets 구조: [{"type": "cluster", "name": "xxx"}, ...]
+            각 target은 독립된 수집/리포트 파이프라인으로 처리됨.
+            """
+            # __EXTRACT_RESULT__ 읽기
+            extract_json = "{}"
             user_msg = ""
             for m in state["messages"]:
                 if isinstance(m, SystemMessage) and isinstance(m.content, str):
-                    if m.content.startswith("__RESOURCE_CONTEXT__:"):
-                        resource_json = m.content.split(":", 1)[1]
+                    if m.content.startswith("__EXTRACT_RESULT__:"):
+                        extract_json = m.content.split(":", 1)[1]
                 if isinstance(m, HumanMessage):
                     user_msg = m.content if isinstance(m.content, str) else str(m.content)
 
-            # 리소스 컨텍스트가 없으면 검증 스킵 → 바로 collect로
-            if not resource_json:
-                logger.info("[Validate] 리소스 컨텍스트 없음 → 검증 스킵")
-                return {"messages": [
-                    SystemMessage(content="__VALIDATION_RESULT__:skip")
-                ]}
-
             try:
-                resources = json.loads(resource_json)
+                extracted = json.loads(extract_json)
             except json.JSONDecodeError:
-                logger.warning("[Validate] 리소스 컨텍스트 JSON 파싱 실패 → 검증 스킵")
-                return {"messages": [
-                    SystemMessage(content="__VALIDATION_RESULT__:skip")
-                ]}
+                extracted = {}
 
-            # 프로필 결정
-            profile = profile_resolver.resolve(user_msg) if user_msg else "default"
+            identifiers = extracted.get("identifiers", [])
+            service_hint = extracted.get("service_hint", "general")
+            account_ref = extracted.get("account_ref")
+            regions = extracted.get("regions", [])
+            time_range = extracted.get("time_range")
 
-            # 리소스 타입별 검증 태스크 생성
-            validation_tasks = []
-            type_mapping = {
-                "cluster_names": "cluster",
-                "instance_ids": "instance",
-                "db_identifiers": "db",
-                "function_names": "function",
-            }
+            # 1. 프로필 결정: account_ref 우선, 없으면 메시지 전체에서 매칭
+            if account_ref:
+                profile = profile_resolver.resolve(account_ref)
+            else:
+                profile = profile_resolver.resolve(user_msg) if user_msg else profile_resolver.default_profile
 
-            for field, resource_type in type_mapping.items():
-                names = resources.get(field, [])
-                if isinstance(names, list):
-                    for name in names:
-                        validation_tasks.append(
-                            _validate_resource_via_mcp(resource_type, name, profile, default_region)
-                        )
-
-            if not validation_tasks:
-                # 검증 가능한 리소스가 없음 (regions, time_range 등만 있는 경우)
-                logger.info("[Validate] 검증 가능한 리소스 없음 → 스킵")
-                return {"messages": [
-                    SystemMessage(content="__VALIDATION_RESULT__:skip")
-                ]}
-
-            # 병렬 검증 실행
-            results = await asyncio.gather(*validation_tasks)
-
-            valid = [r for r in results if r["exists"]]
-            invalid = [r for r in results if not r["exists"]]
-
-            validation_result = {
-                "valid": [{"name": r["name"], "type": r["type"]} for r in valid],
-                "invalid": [{"name": r["name"], "type": r["type"], "detail": r["detail"]} for r in invalid],
-            }
+            region = regions[0] if regions else default_region
 
             logger.info(
-                f"[Validate] 검증 완료: 존재 {len(valid)}건, 미존재 {len(invalid)}건"
+                f"[Resolve] identifiers={identifiers}, service_hint={service_hint}, "
+                f"account_ref={account_ref}, profile={profile}, region={region}"
             )
 
+            # 2. identifiers가 없으면 → 전체 현황 조회 (targets 없이 진행)
+            if not identifiers:
+                logger.info("[Resolve] 식별자 없음 → 전체 현황 조회 모드")
+                resolved = {
+                    "profile": profile,
+                    "targets": [],
+                    "service_hint": service_hint,
+                    "regions": regions,
+                    "time_range": time_range,
+                }
+                return {"messages": [
+                    SystemMessage(content=f"__RESOLVED_TARGETS__:{json.dumps(resolved, ensure_ascii=False)}")
+                ]}
+
+            # 3. 각 identifier를 실제 리소스와 대조
+            confirmed_targets = []
+            failed_targets = []
+
+            # pod 이름 패턴 감지 (service_hint가 eks이고 클러스터명 패턴이 아닌 경우)
+            _INSTANCE_ID_PATTERN = re.compile(r'^i-[0-9a-f]{8,17}$')
+            _POD_NAME_INDICATORS = ["-pod", "-deploy", "-sts", "-rs-"]
+
+            for identifier in identifiers:
+                # EC2 인스턴스 ID 패턴
+                if _INSTANCE_ID_PATTERN.match(identifier):
+                    result = await _validate_single_resource_via_mcp("ec2", identifier, profile, region)
+                    if result["exists"]:
+                        confirmed_targets.append({"type": "instance", "name": identifier})
+                    else:
+                        failed_targets.append(result)
+                    continue
+
+                # pod 이름 가능성 체크 → PromQL로 클러스터 역추적
+                is_pod_like = (
+                    service_hint == "eks"
+                    and any(ind in identifier.lower() for ind in _POD_NAME_INDICATORS)
+                )
+                if is_pod_like:
+                    cluster_name = await _resolve_pod_to_cluster_via_promql(identifier)
+                    if cluster_name:
+                        # 클러스터 존재 확인
+                        result = await _validate_single_resource_via_mcp("eks", cluster_name, profile, region)
+                        if result["exists"]:
+                            confirmed_targets.append({
+                                "type": "cluster", "name": cluster_name,
+                                "pod_filter": identifier,  # 이 클러스터에서 이 pod만 조회
+                            })
+                            continue
+
+                # service_hint 기반 직접 검증
+                result = await _validate_single_resource_via_mcp(service_hint, identifier, profile, region)
+                if result["exists"]:
+                    type_map = {"eks": "cluster", "ecs": "cluster", "ec2": "instance",
+                                "rds": "db", "lambda": "function", "alb": "alb"}
+                    confirmed_targets.append({
+                        "type": type_map.get(service_hint, service_hint),
+                        "name": identifier,
+                    })
+                else:
+                    # service_hint가 틀렸을 수 있으니 eks로 한번 더 시도
+                    if service_hint != "eks":
+                        fallback = await _validate_single_resource_via_mcp("eks", identifier, profile, region)
+                        if fallback["exists"]:
+                            confirmed_targets.append({"type": "cluster", "name": identifier})
+                            continue
+                    failed_targets.append(result)
+
+            logger.info(
+                f"[Resolve] 확정 {len(confirmed_targets)}건, 실패 {len(failed_targets)}건"
+            )
+
+            resolved = {
+                "profile": profile,
+                "targets": confirmed_targets,
+                "failed": [{"name": f["name"], "type": f["type"], "detail": f.get("detail", "")} for f in failed_targets],
+                "service_hint": service_hint,
+                "regions": regions,
+                "time_range": time_range,
+            }
             return {"messages": [
-                SystemMessage(content=f"__VALIDATION_RESULT__:{json.dumps(validation_result, ensure_ascii=False)}")
+                SystemMessage(content=f"__RESOLVED_TARGETS__:{json.dumps(resolved, ensure_ascii=False)}")
             ]}
 
-        def route_after_validate(state: MessagesState) -> str:
-            """검증 결과에 따라 collect 또는 direct_answer로 라우팅"""
+        def route_after_resolve(state: MessagesState) -> str:
+            """resolve 결과에 따라 collect 또는 validation_fail로 라우팅"""
             for m in reversed(state["messages"]):
                 if isinstance(m, SystemMessage) and isinstance(m.content, str):
-                    if m.content.startswith("__VALIDATION_RESULT__:"):
-                        payload = m.content.split(":", 1)[1]
-
-                        # 스킵인 경우 → collect로 진행
-                        if payload == "skip":
-                            return "collect"
-
+                    if m.content.startswith("__RESOLVED_TARGETS__:"):
                         try:
-                            result = json.loads(payload)
+                            resolved = json.loads(m.content.split(":", 1)[1])
                         except json.JSONDecodeError:
                             return "collect"
 
-                        valid = result.get("valid", [])
-                        invalid = result.get("invalid", [])
+                        targets = resolved.get("targets", [])
+                        failed = resolved.get("failed", [])
 
-                        # 존재하는 리소스가 하나도 없으면 → direct_answer
-                        if not valid and invalid:
+                        # 확정된 타겟이 하나도 없고 실패만 있으면 → validation fail
+                        if not targets and failed:
                             return "direct_answer_validation_fail"
 
-                        # 존재하는 리소스가 있으면 → collect
+                        # 타겟이 있거나, 식별자 자체가 없는 전체 조회 → collect
                         return "collect"
             return "collect"
 
         async def direct_answer_validation_fail_node(state: MessagesState) -> MessagesState:
-            """검증 실패 시 '리소스를 찾을 수 없습니다' 응답 생성"""
-            # 검증 결과에서 실패 목록 추출
-            invalid_list = []
+            """resolve에서 모든 리소스가 존재하지 않을 때 응답 생성"""
+            failed_list = []
             for m in state["messages"]:
                 if isinstance(m, SystemMessage) and isinstance(m.content, str):
-                    if m.content.startswith("__VALIDATION_RESULT__:"):
+                    if m.content.startswith("__RESOLVED_TARGETS__:"):
                         try:
-                            result = json.loads(m.content.split(":", 1)[1])
-                            invalid_list = result.get("invalid", [])
+                            resolved = json.loads(m.content.split(":", 1)[1])
+                            failed_list = resolved.get("failed", [])
                         except json.JSONDecodeError:
                             pass
 
-            # 사용자 원본 메시지 추출
-            user_msg = ""
-            for m in state["messages"]:
-                if isinstance(m, HumanMessage):
-                    user_msg = m.content if isinstance(m.content, str) else str(m.content)
-                    break
-
-            # LLM 없이 코드로 응답 생성
+            type_labels = {
+                "cluster": "EKS 클러스터", "instance": "EC2 인스턴스",
+                "db": "RDS 인스턴스", "function": "Lambda 함수",
+                "eks": "EKS 클러스터", "ec2": "EC2 인스턴스",
+                "rds": "RDS 인스턴스", "lambda": "Lambda 함수",
+            }
             lines = ["요청하신 리소스를 찾을 수 없습니다.\n"]
-            type_labels = {"cluster": "EKS 클러스터", "instance": "EC2 인스턴스", "db": "RDS 인스턴스", "function": "Lambda 함수"}
-            for item in invalid_list:
-                label = type_labels.get(item["type"], item["type"])
+            for item in failed_list:
+                label = type_labels.get(item.get("type", ""), item.get("type", "unknown"))
                 lines.append(f"- {label}: `{item['name']}` — 존재하지 않음")
-
             lines.append("\n리소스 이름을 확인하고 다시 요청해주세요.")
 
             return {"messages": [
                 AIMessage(content="\n".join(lines))
             ]}
 
-        # ── Phase 2: 데이터 수집 (sub-agent 호출 루프) ──
+        # ── Phase 2: 데이터 수집 (타겟별 격리 수집) ──
         async def collect_setup_node(state: MessagesState) -> MessagesState:
-            """수집 단계 시작: 수집용 시스템 프롬프트로 교체"""
-            # 분류 메타에서 시간 범위 추출
+            """수집 단계 시작: resolve 결과에서 타겟 정보를 읽고 수집용 프롬프트 구성.
+
+            타겟이 여러 개면 각 타겟별로 독립 수집을 순차 실행.
+            각 수집에서 sub-agent에는 해당 타겟 하나만 전달.
+            """
+            # 시간 범위 추출
             time_window = None
             for m in state["messages"]:
                 if isinstance(m, SystemMessage) and isinstance(m.content, str):
@@ -1231,9 +1384,36 @@ class BedrockAgent:
                         if len(parts) == 2:
                             time_window = (parts[0], parts[1])
 
+            # resolve 결과 읽기
+            resolved = {}
+            for m in state["messages"]:
+                if isinstance(m, SystemMessage) and isinstance(m.content, str):
+                    if m.content.startswith("__RESOLVED_TARGETS__:"):
+                        try:
+                            resolved = json.loads(m.content.split(":", 1)[1])
+                        except json.JSONDecodeError:
+                            pass
+
+            targets = resolved.get("targets", [])
+            profile = resolved.get("profile", "default")
+            service_hint = resolved.get("service_hint", "general")
+            regions = resolved.get("regions", [])
+            time_range_str = resolved.get("time_range")
+
             collect_prompt = _build_collect_prompt(time_window)
+
+            # __CURRENT_TARGETS__ 에 타겟 목록 저장 (collect_tools_node에서 사용)
+            target_info = {
+                "targets": targets,
+                "profile": profile,
+                "service_hint": service_hint,
+                "regions": regions,
+                "time_range": time_range_str,
+            }
+
             return {"messages": [
-                SystemMessage(content=f"__PHASE__:collect"),
+                SystemMessage(content="__PHASE__:collect"),
+                SystemMessage(content=f"__CURRENT_TARGETS__:{json.dumps(target_info, ensure_ascii=False)}"),
                 SystemMessage(content=collect_prompt),
             ]}
 
@@ -1245,29 +1425,78 @@ class BedrockAgent:
 
         async def collect_tools_node(state: MessagesState) -> MessagesState:
             """Sub-agent 호출을 병렬 실행.
-            
-            사용자 원본 메시지를 sub-agent task에 자동 첨부하여,
-            Main Agent가 task 요약 시 인스턴스 ID 등 핵심 정보를 누락하는 문제를 방지.
+
+            __CURRENT_TARGETS__에서 확정된 타겟 정보를 읽어
+            sub-agent task에 단일 타겟만 주입.
+            다른 클러스터/리소스의 데이터가 섞이지 않도록 격리.
             """
             messages = state["messages"]
             last_message = messages[-1]
             if not (hasattr(last_message, 'tool_calls') and last_message.tool_calls):
                 return {"messages": []}
 
-            # 사용자 원본 메시지 추출 (인스턴스 ID, 리소스명 등 핵심 컨텍스트 보존)
+            # 사용자 원본 메시지 추출
             user_original = ""
             for m in messages:
                 if isinstance(m, HumanMessage):
                     user_original = m.content if isinstance(m.content, str) else str(m.content)
                     break
 
-            # 추출된 리소스 식별자 가져오기 (extract_node에서 주입)
-            resource_context = ""
+            # 확정된 타겟 정보 읽기
+            target_info = {}
             for m in messages:
                 if isinstance(m, SystemMessage) and isinstance(m.content, str):
-                    if m.content.startswith("__RESOURCE_CONTEXT__:"):
-                        resource_context = m.content.split(":", 1)[1]
+                    if m.content.startswith("__CURRENT_TARGETS__:"):
+                        try:
+                            target_info = json.loads(m.content.split(":", 1)[1])
+                        except json.JSONDecodeError:
+                            pass
                         break
+
+            targets = target_info.get("targets", [])
+            profile = target_info.get("profile", "default")
+
+            # 타겟 정보를 sub-agent에 주입할 문자열 생성
+            def _build_target_constraint(targets: list[dict]) -> str:
+                """확정된 타겟만 조회하도록 강제하는 제약 문자열 생성"""
+                if not targets:
+                    return ""
+
+                lines = [
+                    "## ⚠️ MANDATORY TARGET CONSTRAINT (절대 준수)",
+                    "아래 확정된 리소스만 조회할 것. 다른 리소스는 절대 조회 금지.",
+                    ""
+                ]
+                for t in targets:
+                    t_type = t.get("type", "unknown")
+                    t_name = t.get("name", "unknown")
+                    pod_filter = t.get("pod_filter")
+
+                    type_labels = {
+                        "cluster": "EKS 클러스터",
+                        "instance": "EC2 인스턴스",
+                        "db": "RDS 인스턴스",
+                        "function": "Lambda 함수",
+                    }
+                    label = type_labels.get(t_type, t_type)
+                    lines.append(f"- {label}: `{t_name}`")
+
+                    if pod_filter:
+                        lines.append(f"  → pod 필터: `{pod_filter}` (이 pod의 메트릭/로그만 조회)")
+
+                    # 클러스터 타겟인 경우 PromQL 라벨 필터 명시
+                    if t_type == "cluster":
+                        lines.append(f'  → PromQL: cluster="{t_name}" 라벨 필터 필수 사용')
+                        lines.append(f"  → 로그 그룹: /aws/containerinsights/{t_name}/ 접두사 사용")
+
+                lines.extend([
+                    "",
+                    f"AWS profile: {profile}",
+                    "위 리소스 외의 다른 클러스터/인스턴스/DB의 메트릭·로그·상태를 조회하면 안 됩니다.",
+                ])
+                return "\n".join(lines)
+
+            target_constraint = _build_target_constraint(targets)
 
             tool_map = {tool.name: tool for tool in main_tools}
 
@@ -1276,18 +1505,13 @@ class BedrockAgent:
                 tool_args = dict(tool_call["args"])
                 tool_id = tool_call["id"]
 
-                # sub-agent task에 추출된 리소스 식별자 + 사용자 원본 메시지를 주입
+                # sub-agent task에 타겟 제약 + 사용자 원본 메시지를 주입
                 if "task" in tool_args:
                     prefix_parts = []
-                    if resource_context:
-                        prefix_parts.append(
-                            f"## MANDATORY TARGETS (코드에서 추출된 확정 값 — 반드시 이 리소스만 조회할 것)\n"
-                            f"{resource_context}"
-                        )
+                    if target_constraint:
+                        prefix_parts.append(target_constraint)
                     if user_original:
-                        prefix_parts.append(
-                            f"## 사용자 원본 요청\n{user_original}"
-                        )
+                        prefix_parts.append(f"## 사용자 원본 요청\n{user_original}")
                     if prefix_parts:
                         tool_args["task"] = (
                             "\n\n".join(prefix_parts)
@@ -1308,7 +1532,7 @@ class BedrockAgent:
                                    name=tool_name, tool_call_id=tool_id)
 
             # 같은 sub-agent에 동일한 task 내용의 중복 호출만 방지
-            seen_tools: dict[str, str] = {}  # name → task 내용
+            seen_tools: dict[str, str] = {}
             unique_calls = []
             for tc in last_message.tool_calls:
                 name = tc["name"]
@@ -1345,13 +1569,14 @@ class BedrockAgent:
                 return "collect_tools"
             return "report_setup"
 
-        # ── Phase 3: 리포트 작성 ──
+        # ── Phase 3: 리포트 작성 (타겟별 분리 리포트) ──
         # report_llm: 도구 없는 LLM (리포트 작성 전용)
         report_llm = main_llm
 
         async def report_setup_node(state: MessagesState) -> MessagesState:
             """수집된 데이터를 정리하여 리포트 작성용 메시지로 재구성.
-            
+
+            타겟이 여러 개면 타겟별로 구분된 리포트 입력을 생성.
             수집 결과를 코드 레벨로 검증하여 유효 데이터/에러/빈 결과를 분류하고,
             리포트 LLM에 명시적으로 전달하여 hallucination을 방지한다.
             """
@@ -1362,25 +1587,35 @@ class BedrockAgent:
                     if m.content.startswith("__QUERY_TYPE__:"):
                         query_type = m.content.split(":")[1]
 
+            # 타겟 정보 추출
+            target_info = {}
+            for m in state["messages"]:
+                if isinstance(m, SystemMessage) and isinstance(m.content, str):
+                    if m.content.startswith("__CURRENT_TARGETS__:"):
+                        try:
+                            target_info = json.loads(m.content.split(":", 1)[1])
+                        except json.JSONDecodeError:
+                            pass
+
+            targets = target_info.get("targets", [])
+
             report_prompt = _build_report_prompt(query_type)
 
             # 수집된 데이터 추출 및 유효성 검증
-            # 에러/타임아웃/빈 결과를 코드로 판별하여 LLM에 명시
             _ERROR_PATTERNS = [
                 "Tool execution error", "Sub-agent error", "timed out",
                 "not found", "not connected", "Sub-agent가 응답을 생성하지 못했습니다",
                 "도구 호출 제한에 도달", "중복 호출 차단",
             ]
 
-            collected_valid = []   # 유효한 수집 결과
-            collected_failed = []  # 실패/에러 결과
+            collected_valid = []
+            collected_failed = []
             for m in state["messages"]:
                 if isinstance(m, ToolMessage):
                     tool_name = m.name or "unknown"
                     content = str(m.content) if m.content else ""
                     stripped = content.strip()
 
-                    # 에러/빈 결과 판별
                     is_error = (
                         not stripped
                         or len(stripped) < 10
@@ -1401,8 +1636,30 @@ class BedrockAgent:
                     user_msg = m.content if isinstance(m.content, str) else str(m.content)
                     break
 
-            # 리포트 입력 구성: 유효 데이터와 실패 목록을 명확히 분리
+            # 리포트 입력 구성
             parts = [f"질문: {user_msg}\n"]
+
+            # 타겟 정보를 리포트에 명시 → LLM이 정확한 리소스명으로 리포트 작성
+            if targets:
+                target_lines = ["## 📌 분석 대상 리소스 (확정됨)"]
+                type_labels = {
+                    "cluster": "EKS 클러스터", "instance": "EC2 인스턴스",
+                    "db": "RDS 인스턴스", "function": "Lambda 함수",
+                }
+                for t in targets:
+                    label = type_labels.get(t.get("type", ""), t.get("type", ""))
+                    target_lines.append(f"- {label}: `{t['name']}`")
+                    pod_filter = t.get("pod_filter")
+                    if pod_filter:
+                        target_lines.append(f"  → 대상 pod: `{pod_filter}`")
+
+                if len(targets) > 1:
+                    target_lines.append("")
+                    target_lines.append("⚠️ 타겟이 여러 개입니다. 각 타겟별로 독립된 섹션으로 리포트를 작성하세요.")
+                    target_lines.append("각 섹션은 '## 📊 {리소스명} 분석 리포트' 형태의 헤더로 시작하세요.")
+                    target_lines.append("한 타겟의 데이터를 다른 타겟의 리포트에 섞지 마세요.")
+
+                parts.append("\n".join(target_lines))
 
             if collected_failed:
                 parts.append(
@@ -1426,11 +1683,10 @@ class BedrockAgent:
             report_input = "\n\n".join(parts)
 
             logger.info(
-                f"[Report] 리포트 작성 시작 (유형: {query_type}, "
+                f"[Report] 리포트 작성 시작 (유형: {query_type}, 타겟 {len(targets)}건, "
                 f"유효 데이터 {len(collected_valid)}건, 실패 {len(collected_failed)}건)"
             )
 
-            # 기존 메시지를 모두 교체 → 리포트 작성용 깨끗한 컨텍스트
             return {"messages": [
                 SystemMessage(content=report_prompt),
                 HumanMessage(content=report_input),
@@ -1476,7 +1732,7 @@ class BedrockAgent:
         graph = StateGraph(MessagesState)
         graph.add_node("extract", extract_node)
         graph.add_node("classify", classify_node)
-        graph.add_node("validate", validate_node)
+        graph.add_node("resolve", resolve_node)
         graph.add_node("collect", collect_setup_node)
         graph.add_node("collect_agent", collect_agent_node)
         graph.add_node("collect_tools", collect_tools_node)
@@ -1488,8 +1744,8 @@ class BedrockAgent:
         graph.add_edge(START, "extract")
         graph.add_edge("extract", "classify")
         graph.add_conditional_edges("classify", route_after_classify,
-                                     {"validate": "validate", "direct_answer": "direct_answer"})
-        graph.add_conditional_edges("validate", route_after_validate,
+                                     {"resolve": "resolve", "direct_answer": "direct_answer"})
+        graph.add_conditional_edges("resolve", route_after_resolve,
                                      {"collect": "collect", "direct_answer_validation_fail": "direct_answer_validation_fail"})
         graph.add_edge("collect", "collect_agent")
         graph.add_conditional_edges("collect_agent", should_continue_collecting,
