@@ -441,7 +441,6 @@ def build_main_graph(
                 lines.append(f"  → pod 필터: `{pod_filter}` (이 pod의 메트릭/로그만 조회)")
             if t_type == "cluster":
                 lines.append(f'  → PromQL: cluster="{t_name}" 라벨 필터 필수 사용')
-                lines.append(f"  → 로그 그룹: /aws/containerinsights/{t_name}/ 접두사 사용")
 
         lines.extend([
             "",

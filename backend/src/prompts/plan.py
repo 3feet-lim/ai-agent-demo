@@ -108,8 +108,11 @@ def build_plan_prompt(
         "- 같은 step 내의 agents는 병렬 실행됨.",
         "",
         "### 순서 결정 기준",
-        "- 로그 그룹 이름을 모르는 경우: resource로 먼저 로그 그룹 탐색 → log 수집.",
-        "  예: EKS 장애 분석 시 resource(클러스터 정보 + 로그 그룹 조회) → log + metric 병렬.",
+        "- 로그/메트릭 수집 전에 관련 리소스 정보를 먼저 조회해야 한다.",
+        "  resource agent로 대상 리소스의 상세 정보와 관련 리소스(로그 그룹, 노드그룹 등)를 먼저 확인.",
+        "  그 결과를 다음 step의 log/metric agent에 전달하여 정확한 리소스명으로 조회하도록 한다.",
+        "  예: EKS 장애 → resource(클러스터 상태 + describe-log-groups로 관련 로그 그룹 조회) → log + metric 병렬.",
+        "- 로그 그룹 이름, 메트릭 네임스페이스 등은 절대 추측하지 말 것. 반드시 resource agent로 먼저 조회.",
         "- 리소스 ID를 이미 알고 있는 경우: 바로 해당 agent 호출.",
         "- 네트워크 문제: resource(VPC/서브넷 정보) → network(경로 조사) 순서.",
         "",
@@ -136,13 +139,13 @@ def build_plan_prompt(
         "",
         "### EKS 클러스터 장애 분석",
         '{"steps": [',
-        '  {"step_id": 0, "agents": ["resource"], "purpose": "EKS 클러스터 기본 정보 및 노드그룹 상태 조회, Container Insights 로그 그룹 확인", '
+        '  {"step_id": 0, "agents": ["resource"], "purpose": "EKS 클러스터 상태 조회 및 관련 로그 그룹 탐색", '
         '"task_template": "EKS 클러스터 my-cluster의 상태를 확인하세요. '
-        'describe-cluster, list-nodegroups, describe-nodegroup을 호출하고, '
-        '/aws/containerinsights/my-cluster/ 접두사로 로그 그룹을 조회하세요. '
+        'describe-cluster, list-nodegroups, describe-nodegroup을 호출하세요. '
+        '그리고 describe-log-groups를 호출하여 my-cluster와 관련된 모든 로그 그룹을 조회하세요. '
         'profile: default, region: ap-northeast-2", "depends_on": null},',
         '  {"step_id": 1, "agents": ["log", "metric"], "purpose": "로그 수집 + 메트릭 수집 (병렬)", '
-        '"task_template": "이전 단계에서 확인된 로그 그룹에서 최근 30분간 에러 로그를 검색하세요. '
+        '"task_template": "이전 단계에서 확인된 로그 그룹 이름을 사용하여 최근 30분간 에러 로그를 검색하세요. '
         '메트릭은 CPU, 메모리, Pod 재시작 횟수를 조회하세요. cluster=my-cluster", "depends_on": 0}',
         "]}",
         "",
