@@ -174,10 +174,18 @@ class MCPServerConnection:
             result = await self._session.list_tools()
             tools = []
             for tool in result.tools:
+                schema = tool.inputSchema if hasattr(tool, 'inputSchema') else {}
+                # FastMCP ctx 파라미터가 input_schema에 포함되어 있는지 확인
+                props = schema.get("properties", {})
+                if "ctx" in props:
+                    logger.warning(
+                        f"[{self.name}] 도구 '{tool.name}'의 input_schema에 ctx 포함됨 — "
+                        f"FastMCP 버그로 추정, 클라이언트 측에서 제거 필요"
+                    )
                 tools.append(MCPTool(
                     name=tool.name,
                     description=tool.description or "",
-                    input_schema=tool.inputSchema if hasattr(tool, 'inputSchema') else {},
+                    input_schema=schema,
                     server_name=self.name
                 ))
             return tools

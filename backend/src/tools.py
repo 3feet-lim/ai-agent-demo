@@ -178,6 +178,36 @@ class MCPToolWrapper(BaseTool):
                 return stripped
         return raw
 
+    def _coerce_list_params(self, kwargs: dict) -> dict:
+        """MCP 스키마에서 array 타입인 파라미터를 LLM이 문자열로 보낸 경우 리스트로 변환.
+
+        예: log_group_names='["/aws/eks/..."]' → ["/aws/eks/..."]
+            log_group_names='/aws/eks/...' → ['/aws/eks/...']
+        """
+        original_schema = self.mcp_tool.input_schema or {}
+        properties = original_schema.get("properties", {})
+        for key, val in kwargs.items():
+            if not isinstance(val, str):
+                continue
+            prop_schema = properties.get(key, {})
+            if prop_schema.get("type") != "array":
+                continue
+            # JSON 배열 문자열 시도
+            stripped = val.strip()
+            if stripped.startswith("["):
+                try:
+                    parsed = json.loads(stripped)
+                    if isinstance(parsed, list):
+                        kwargs[key] = parsed
+                        logger.info(f"[타입 변환] {self.name}.{key}: 문자열 → 리스트 ({len(parsed)}개)")
+                        continue
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            # 단일 문자열 → 리스트 래핑
+            kwargs[key] = [val]
+            logger.info(f"[타입 변환] {self.name}.{key}: 단일 문자열 → 리스트 래핑")
+        return kwargs
+
     _CW_PROFILE_TOOLS = {"list_log_groups", "get_log_events", "start_live_tail",
                          "filter_log_events", "start_query", "get_query_results",
                          "get_metric_data", "list_metrics", "describe_alarms"}
@@ -284,10 +314,13 @@ class MCPToolWrapper(BaseTool):
             # None 값 파라미터 제거 (MCP 서버가 타입 불일치로 거부)
             kwargs = {k: v for k, v in kwargs.items() if v is not None}
 
-            # MCP 서버가 ctx를 필수로 요구하면 자동 주입
-            original_schema = self.mcp_tool.input_schema or {}
-            if "ctx" in original_schema.get("properties", {}):
-                kwargs.setdefault("ctx", {})
+            # LLM이 list 타입 파라미터를 문자열로 보내는 경우 자동 변환
+            # 예: log_group_names='["/aws/eks/..."]' → ["/aws/eks/..."]
+            kwargs = self._coerce_list_params(kwargs)
+
+            # ctx는 MCP 서버 내부용 — LLM이 넣은 값이든 자동 주입이든 제거
+            # (ctx가 필요한 MCP 서버는 서버 측에서 자체 주입함)
+            kwargs.pop("ctx", None)
 
             logger.info(f"MCP tool {self.name} called with: {kwargs}")
             result = await self.mcp_manager.execute_tool(self.mcp_tool.name, kwargs)
