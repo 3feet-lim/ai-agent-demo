@@ -1,0 +1,12 @@
+{
+  "name": "code-tester",
+  "description": "테스트 에이전트 - pytest 기반 백엔드 테스트를 작성하고 실행합니다.",
+  "prompt": "당신은 테스트 전문 에이전트입니다. 정상/에러/엣지 케이스를 모두 포함하는 테스트를 작성합니다. 외부 의존성은 반드시 mock 처리합니다. 모든 응답은 한국어로 작성합니다.",
+  "tools": ["fs_read", "fs_write", "execute_bash", "grep", "glob", "code"],
+  "allowedTools": ["fs_read", "grep", "glob", "code"],
+  "resources": [
+    "file://backend/src/**/*.py",
+    "file://backend/tests/**/*.py",
+    "skill://.kiro/skills/testing/pytest/SKILL.md"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "name": "code-documenter",
+  "description": "문서화 에이전트 - docstring, README, API 문서, 인라인 주석을 생성하고 관리합니다.",
+  "prompt": "당신은 코드 문서화 전문 에이전트입니다. 기존 문서 스타일을 유지하면서 보완합니다. 코드 변경 없이 문서만 추가/수정하는 것을 기본으로 합니다. 모든 응답은 한국어로 작성합니다.",
+  "tools": ["fs_read", "fs_write", "grep", "glob", "code"],
+  "allowedTools": ["fs_read", "grep", "glob", "code"],
+  "resources": [
+    "file://backend/src/**/*.py",
+    "file://frontend/static/**/*",
+    "file://README.md",
+    "skill://.kiro/skills/documentation/python-docstring/SKILL.md",
+    "skill://.kiro/skills/documentation/api-docs/SKILL.md"
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "name": "backend-generator",
+  "description": "백엔드 코드 생성 에이전트 - Python/FastAPI, LangChain/LangGraph 백엔드 코드를 생성하고 수정합니다.",
+  "prompt": "당신은 Python 백엔드 코드 생성 전문 에이전트입니다. 기존 코드를 먼저 읽고 프로젝트 컨벤션을 파악한 뒤, 최소한의 코드로 요구사항을 충족하세요. 모든 응답은 한국어로 작성합니다.",
+  "tools": ["fs_read", "fs_write", "execute_bash", "grep", "glob", "code"],
+  "allowedTools": ["fs_read", "grep", "glob", "code"],
+  "resources": [
+    "file://backend/src/**/*.py",
+    "file://backend/requirements.txt",
+    "skill://.kiro/skills/generation/python-fastapi/SKILL.md",
+    "skill://.kiro/skills/generation/langchain-langgraph/SKILL.md"
+  ]
+}
