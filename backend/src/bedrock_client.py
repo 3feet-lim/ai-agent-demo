@@ -7,6 +7,7 @@ Main Agent (라우팅/종합/리포트) → Sub-Agents (데이터 수집)
 - Resource Agent: AWS API MCP (리소스 상태)
 - Network Agent: AWS API MCP (VPC, TGW, SG, NACL)
 """
+import asyncio
 import time
 from typing import Optional, Any
 
