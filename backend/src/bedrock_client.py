@@ -8,6 +8,7 @@ Main Agent (라우팅/종합/리포트) → Sub-Agents (데이터 수집)
 - Network Agent: AWS API MCP (VPC, TGW, SG, NACL)
 """
 import asyncio
+import json
 import time
 from typing import Optional, Any
 
@@ -585,6 +586,10 @@ class BedrockAgent:
 
         except GraphRecursionError:
             logger.warning(f"[{cid}] Main agent 도구 호출 제한 도달")
+            # 태스크 정리
+            stream_task.cancel()
+            mcp_task.cancel()
+            await asyncio.gather(stream_task, mcp_task, return_exceptions=True)
             yield {
                 "type": "token",
                 "content": (
@@ -596,6 +601,10 @@ class BedrockAgent:
             }
         except Exception as e:
             logger.error(f"[{cid}] Error during chat_stream: {e}", exc_info=True)
+            # 태스크 정리
+            stream_task.cancel()
+            mcp_task.cancel()
+            await asyncio.gather(stream_task, mcp_task, return_exceptions=True)
             yield {
                 "type": "token",
                 "content": (
