@@ -11,10 +11,20 @@ def build_resolve_prompt(extracted: dict, profile: str, region: str) -> str:
     identifier_types = extracted.get("identifier_types", {})
     service_hint = extracted.get("service_hint", "general")
 
+    account_ref = extracted.get("account_ref")
+
     id_lines = []
     for ident in identifiers:
         id_type = identifier_types.get(ident, "unknown")
         id_lines.append(f"  - `{ident}` (추정 타입: {id_type})")
+
+    # account_ref 주의사항
+    account_warning = ""
+    if account_ref:
+        account_warning = (
+            f"\n## ⚠️ account_ref = `{account_ref}` — 이것은 AWS 계정 별칭이며 리소스 이름이 아님.\n"
+            f"이 값을 클러스터명, 인스턴스명 등으로 사용하지 말 것.\n"
+        )
 
     return "\n".join([
         "You are a resource resolver. 추출된 식별자가 실제로 존재하는지 확인하라.",
@@ -27,7 +37,7 @@ def build_resolve_prompt(extracted: dict, profile: str, region: str) -> str:
         "",
         "## 검증할 식별자:",
         "\n".join(id_lines) if id_lines else "  (없음 — 전체 현황 조회)",
-        "",
+        account_warning,
         "## ⚠️ 최우선 규칙: 사용자가 이미 제공한 정보 활용",
         "사용자가 리소스의 이름, 상태, ARN 등을 직접 제공한 경우:",
         "- 해당 리소스는 이미 확인된 것으로 간주하고 **추가 검증 없이 targets에 바로 포함**하라.",

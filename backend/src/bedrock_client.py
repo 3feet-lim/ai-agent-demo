@@ -348,6 +348,7 @@ class BedrockAgent:
                 tool.enforced_time_window = time_window
                 tool.resolved_profile = resolved_profile
                 tool.event_queue = event_queue
+                tool.allowed_clusters = None  # 가드레일 초기화 (execute_steps에서 재설정)
 
     def _build_full_system_prompt(
         self, enforced_time_window: tuple[str, str] | None = None,

@@ -719,6 +719,7 @@ def build_main_graph(
         report_prompt = build_report_prompt(
             intent=intent, category=category,
             account_info=account_info, target_resources=target_resources,
+            event_time=time_range or "",
         )
 
         # step별 purpose 매핑 구성 (실행 계획에서 step_id → purpose)

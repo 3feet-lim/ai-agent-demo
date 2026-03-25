@@ -20,7 +20,7 @@ _REPORT_FORMAT_REGISTRY: dict[str, list[str]] = {
         "### 리포트 최상단에 아래 요약 테이블을 반드시 포함할 것",
         "| 항목 | 내용 |",
         "|------|------|",
-        "| 발생일시 | {current_time} |",
+        "| 발생일시 | {event_time} |",
         "| 대상 계정 | {account_info} |",
         "| 대상 서비스그룹 | 퍼블릭 샌드박스 관리 시스템 |",
         "| 환경 구분 | 개발 환경 |",
@@ -98,6 +98,7 @@ def build_report_prompt(
     report_type: str | None = None,
     account_info: str = "",
     target_resources: str = "",
+    event_time: str = "",
 ) -> str:
     """Phase 3: 리포트 작성 프롬프트 (수집된 데이터 기반).
 
@@ -110,6 +111,7 @@ def build_report_prompt(
         report_type: 직접 지정 시 사용. None이면 intent/category에서 자동 결정.
         account_info: 대상 계정 정보 (Account ID / Account Name)
         target_resources: 대상 자원 정보 (name, arn 등)
+        event_time: 이벤트 발생 시각 (알람 시각 등). 없으면 현재 시각 사용.
     """
     time_info = get_current_time_info()
 
@@ -154,6 +156,7 @@ def build_report_prompt(
     # 플레이스홀더 치환
     replacements = {
         "{current_time}": time_info.split("현재 시각: ")[-1] if "현재 시각: " in time_info else time_info,
+        "{event_time}": event_time or time_info,
         "{account_info}": account_info or "(미확인)",
         "{target_resources}": target_resources or "(수집 데이터에서 확인)",
     }
