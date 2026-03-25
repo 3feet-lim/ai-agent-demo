@@ -75,10 +75,47 @@ _MCP_TOOL_DISPLAY = {
     "analyze_metric": "메트릭 추세 분석",
     "get_active_alarms": "활성 알람 조회",
     "get_alarm_history": "알람 이력 조회",
-    "call_aws": "AWS API 호출",
     "list_prometheus_label_values": "Prometheus 라벨 값 조회",
     "list_prometheus_metric_names": "Prometheus 메트릭 목록 조회",
 }
+
+# call_aws의 "aws <service> <action>" → 비전문가용 설명
+_AWS_CLI_DISPLAY = {
+    "eks describe-cluster": "EKS 클러스터 정보 조회",
+    "eks describe-nodegroup": "EKS 노드그룹 정보 조회",
+    "eks list-nodegroups": "EKS 노드그룹 목록 조회",
+    "eks list-clusters": "EKS 클러스터 목록 조회",
+    "ec2 describe-instances": "EC2 인스턴스 정보 조회",
+    "ec2 describe-security-groups": "보안 그룹 정보 조회",
+    "ec2 describe-subnets": "서브넷 정보 조회",
+    "ec2 describe-vpcs": "VPC 정보 조회",
+    "elbv2 describe-target-health": "로드밸런서 대상 상태 확인",
+    "elbv2 describe-load-balancers": "로드밸런서 정보 조회",
+    "elbv2 describe-target-groups": "로드밸런서 대상 그룹 조회",
+    "rds describe-db-instances": "RDS 데이터베이스 정보 조회",
+    "rds describe-db-clusters": "RDS 클러스터 정보 조회",
+    "autoscaling describe-auto-scaling-groups": "오토스케일링 그룹 조회",
+    "cloudwatch describe-alarms": "CloudWatch 알람 조회",
+    "s3 ls": "S3 버킷 목록 조회",
+    "iam get-role": "IAM 역할 정보 조회",
+    "sts get-caller-identity": "AWS 계정 정보 확인",
+}
+
+
+def _get_display_name(tool_name: str, kwargs: dict) -> str:
+    """도구명과 파라미터로부터 비전문가용 설명 생성"""
+    if tool_name == "call_aws":
+        cli_cmd = str(kwargs.get("cli_command", ""))
+        # "aws <service> <action> ..." 에서 service + action 추출
+        m = re.match(r"aws\s+(\S+)\s+(\S+)", cli_cmd)
+        if m:
+            key = f"{m.group(1)} {m.group(2)}"
+            if key in _AWS_CLI_DISPLAY:
+                return _AWS_CLI_DISPLAY[key]
+            # 매핑에 없으면 서비스명 + 액션을 그대로 표시
+            return f"AWS {m.group(1)} {m.group(2)}"
+        return "AWS CLI 명령 실행"
+    return _MCP_TOOL_DISPLAY.get(tool_name, tool_name)
 
 class MCPToolWrapper(BaseTool):
     """MCP 도구를 LangChain BaseTool로 래핑"""
@@ -354,7 +391,7 @@ class MCPToolWrapper(BaseTool):
             if self.event_queue:
                 self.event_queue.put_nowait({
                     "type": "mcp_tool_start", "name": self.name,
-                    "display": _MCP_TOOL_DISPLAY.get(self.name, self.name),
+                    "display": _get_display_name(self.name, kwargs),
                 })
             result = await self.mcp_manager.execute_tool(self.mcp_tool.name, kwargs)
 
@@ -394,7 +431,7 @@ class MCPToolWrapper(BaseTool):
             if self.event_queue:
                 self.event_queue.put_nowait({
                     "type": "mcp_tool_end", "name": self.name, "success": True,
-                    "display": _MCP_TOOL_DISPLAY.get(self.name, self.name),
+                    "display": _get_display_name(self.name, kwargs),
                 })
             return enriched
         except Exception as e:
@@ -402,7 +439,7 @@ class MCPToolWrapper(BaseTool):
             if self.event_queue:
                 self.event_queue.put_nowait({
                     "type": "mcp_tool_end", "name": self.name, "success": False,
-                    "display": _MCP_TOOL_DISPLAY.get(self.name, self.name),
+                    "display": _get_display_name(self.name, kwargs),
                 })
             return f"Tool execution error: {str(e)}"
 
