@@ -251,14 +251,24 @@ def build_main_graph(
                     tool_name = tc["name"]
                     tool_args = tc["args"]
                     tool_id = tc["id"]
+                    logger.info(
+                        f"[Resolve] Loop {loop_count} → tool_call: {tool_name}, "
+                        f"args={json.dumps(tool_args, ensure_ascii=False)[:500]}"
+                    )
                     matched = tool_map.get(tool_name)
                     if matched:
                         try:
                             tool_result = await matched.ainvoke(tool_args)
+                            tool_result_str = str(tool_result)
+                            logger.info(
+                                f"[Resolve] Loop {loop_count} ← tool_result: {tool_name}, "
+                                f"len={len(tool_result_str)}, preview={tool_result_str[:300]}"
+                            )
                             tool_messages.append(ToolMessage(
-                                content=str(tool_result), name=tool_name, tool_call_id=tool_id
+                                content=tool_result_str, name=tool_name, tool_call_id=tool_id
                             ))
                         except Exception as e:
+                            logger.error(f"[Resolve] Loop {loop_count} tool error: {tool_name}: {e}")
                             tool_messages.append(ToolMessage(
                                 content=f"Error: {e}", name=tool_name, tool_call_id=tool_id
                             ))
@@ -297,6 +307,12 @@ def build_main_graph(
 
         targets = resolve_result.get("targets", [])
         failed = resolve_result.get("failed", [])
+
+        logger.info(
+            f"[Resolve] LLM 최종 응답 파싱 결과: "
+            f"targets={json.dumps(targets, ensure_ascii=False)}, "
+            f"failed={json.dumps(failed, ensure_ascii=False)}"
+        )
 
         # 식별자가 있었는데 targets가 비어있으면 → 강제 실패 처리 (할루시네이션 방지)
         if identifiers and not targets and not failed:
