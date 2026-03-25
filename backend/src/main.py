@@ -183,7 +183,10 @@ async def chat(request: ChatRequest, x_user_id: Optional[str] = Header(None)):
                 ):
                     event_type = event.get("type")
 
-                    if event_type == "tool_start":
+                    if event_type == "phase":
+                        yield f"data: {json.dumps({'phase': event['message']})}\n\n"
+
+                    elif event_type == "tool_start":
                         yield f"data: {json.dumps({'tool_start': event['name']})}\n\n"
 
                     elif event_type == "tool_end":

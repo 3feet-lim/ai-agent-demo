@@ -388,11 +388,24 @@ class BedrockAgent:
         )
         messages = self._trim_messages_by_tokens(messages)
 
+        # 노드별 사용자 표시 메시지
+        _NODE_PHASE_LABELS = {
+            "analyze": "🔍 사용자 요청을 분석하고 있습니다...",
+            "resolve": "🔎 대상 리소스를 확인하고 있습니다...",
+            "plan": "📋 실행 계획을 수립하고 있습니다...",
+            "execute_steps": "⚙️ 데이터를 수집하고 있습니다...",
+            "report_setup": "📊 수집 결과를 정리하고 있습니다...",
+            "report": "✍️ 리포트를 작성하고 있습니다...",
+            "direct_answer": "💬 응답을 생성하고 있습니다...",
+            "direct_answer_validation_fail": "⚠️ 확인 결과를 정리하고 있습니다...",
+        }
+
         stream_start = time.monotonic()
         first_token_time = None
         tool_call_count = 0
         token_count = 0
         active_tools: set[str] = set()  # 현재 실행 중인 sub-agent 추적
+        current_phase: str = ""  # 현재 노드 추적 (중복 방지)
 
         try:
             async for msg, metadata in self._main_graph.astream(
@@ -401,6 +414,12 @@ class BedrockAgent:
                 stream_mode="messages",
             ):
                 node = metadata.get("langgraph_node", "")
+
+                # 노드 전환 시 phase 이벤트 발행
+                if node and node != current_phase and node in _NODE_PHASE_LABELS:
+                    current_phase = node
+                    yield {"type": "phase", "name": node,
+                           "message": _NODE_PHASE_LABELS[node]}
 
                 # tool_calls가 있는 AIMessage/AIMessageChunk → sub-agent 호출 시작
                 if isinstance(msg, (AIMessage, AIMessageChunk)):

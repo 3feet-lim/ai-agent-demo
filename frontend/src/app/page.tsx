@@ -49,6 +49,7 @@ interface Message {
   images?: string[];
   toolTrace?: string[];
   activeTools?: string[];
+  phaseMessage?: string;
   timestamp?: string;
 }
 
@@ -211,6 +212,18 @@ export default function Home() {
                   });
                 }
 
+                // 단계 진행 상태 표시
+                if (parsed.phase) {
+                  setMessages((prev) => {
+                    const updated = [...prev];
+                    const last = updated[updated.length - 1];
+                    if (last?.role === "assistant") {
+                      updated[updated.length - 1] = { ...last, phaseMessage: parsed.phase };
+                    }
+                    return updated;
+                  });
+                }
+
                 // 도구 호출 시작: 실행 중인 도구 표시
                 if (parsed.tool_start) {
                   setMessages((prev) => {
@@ -263,6 +276,7 @@ export default function Home() {
                       updated[updated.length - 1] = {
                         ...last,
                         content: last.content + parsed.token,
+                        phaseMessage: undefined,
                       };
                     }
                     return updated;

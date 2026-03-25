@@ -43,6 +43,7 @@ interface Message {
   images?: string[];
   toolTrace?: string[];
   activeTools?: string[];
+  phaseMessage?: string;
   timestamp?: string;
 }
 
@@ -254,6 +255,12 @@ export default function ChatArea({ messages, isLoading, isStreaming }: ChatAreaP
                     className="message-image"
                   />
                 ))}
+              </div>
+            )}
+            {/* 단계 진행 상태 표시 */}
+            {msg.role === "assistant" && msg.phaseMessage && !msg.content && (
+              <div className="phase-status">
+                <span>{msg.phaseMessage}</span>
               </div>
             )}
             {/* 도구 실행 중 표시 */}
