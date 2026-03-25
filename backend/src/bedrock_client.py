@@ -553,6 +553,16 @@ class BedrockAgent:
                     yield {"type": "tool_end", "name": tool_name,
                            "display": display, "success": not is_error}
 
+                # SystemMessage → 실행 계획 등 메타데이터 감지
+                elif isinstance(msg, SystemMessage):
+                    content = msg.content if isinstance(msg.content, str) else ""
+                    if content.startswith("__EXECUTION_PLAN__:"):
+                        try:
+                            plan = json.loads(content[len("__EXECUTION_PLAN__:"):])
+                            yield {"type": "execution_plan", "plan": plan}
+                        except json.JSONDecodeError:
+                            pass
+
             # 태스크 정리
             await asyncio.gather(stream_task, mcp_task, return_exceptions=True)
 

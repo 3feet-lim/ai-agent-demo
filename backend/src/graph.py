@@ -529,35 +529,40 @@ def build_main_graph(
         accumulated_context: dict[int, str] = {}  # step_id → 결과 텍스트
         all_tool_messages: list[ToolMessage] = []
 
-        for step in steps:
-            step_id = step.get("step_id", 0)
-            agents = step.get("agents", [])
-            purpose = step.get("purpose", "")
-            task_template = step.get("task_template", "")
-            depends_on = step.get("depends_on")
+        # step들을 의존성 기반으로 그룹화하여 병렬 실행
+        # depends_on이 같은(또는 null인) step들은 동시에 실행 가능
+        pending = list(steps)
+        while pending:
+            # 의존성이 충족된 step들을 찾아 병렬 실행
+            ready = [
+                s for s in pending
+                if s.get("depends_on") is None
+                or s["depends_on"] in accumulated_context
+            ]
+            if not ready:
+                logger.error(f"[Execute] 의존성 교착: 남은 step={[s.get('step_id') for s in pending]}")
+                break
+            for s in ready:
+                pending.remove(s)
 
-            # 이전 step 결과를 context로 구성
-            prev_context = ""
-            if depends_on is not None and depends_on in accumulated_context:
-                prev_context = accumulated_context[depends_on]
+            # ready 그룹 내 모든 agent를 한꺼번에 병렬 실행
+            async def _run_step_agent(step: dict, agent_role: str, idx: int) -> tuple[int, int, str, str]:
+                """(step_id, agent_idx, tool_name, 결과) 반환"""
+                step_id = step.get("step_id", 0)
+                task_template = step.get("task_template", "")
+                depends_on = step.get("depends_on")
 
-            logger.info(
-                f"[Execute] Step {step_id}: agents={agents}, purpose={purpose}, "
-                f"depends_on={depends_on}, prev_context_len={len(prev_context)}"
-            )
+                prev_context = ""
+                if depends_on is not None and depends_on in accumulated_context:
+                    prev_context = accumulated_context[depends_on]
 
-            # 같은 step 내의 agents 병렬 실행
-            async def _run_agent(agent_role: str) -> tuple[str, str]:
-                """단일 agent 실행. (tool_name, 결과 텍스트) 반환."""
                 matched_tool = tool_by_role.get(agent_role)
                 if not matched_tool:
                     logger.warning(f"[Execute] agent role '{agent_role}'에 해당하는 도구 없음")
-                    return (
-                        _ROLE_TO_TOOL_NAME.get(agent_role, f"unknown_{agent_role}"),
-                        f"agent '{agent_role}'에 해당하는 도구를 찾을 수 없습니다.",
-                    )
+                    return (step_id, idx,
+                            _ROLE_TO_TOOL_NAME.get(agent_role, f"unknown_{agent_role}"),
+                            f"agent '{agent_role}'에 해당하는 도구를 찾을 수 없습니다.")
 
-                # task 구성: 제약 조건 + 이전 결과 + task_template
                 task_parts = []
                 if target_constraint:
                     task_parts.append(target_constraint)
@@ -567,49 +572,56 @@ def build_main_graph(
                     task_parts.append(f"## 이전 단계 수집 결과\n{prev_context}")
                 task_parts.append(f"---\n{task_template}")
 
-                full_task = "\n\n".join(task_parts)
-
                 try:
-                    result = await matched_tool.ainvoke({"task": full_task})
-                    return (matched_tool.name, str(result))
+                    result = await matched_tool.ainvoke({"task": "\n\n".join(task_parts)})
+                    return (step_id, idx, matched_tool.name, str(result))
                 except Exception as e:
                     logger.error(f"[Execute] agent '{agent_role}' 실행 에러: {e}")
-                    return (matched_tool.name, f"Sub-agent error: {str(e)}")
+                    return (step_id, idx, matched_tool.name, f"Sub-agent error: {str(e)}")
 
-            # 병렬 실행
-            results = await asyncio.gather(
-                *[_run_agent(role) for role in agents],
-                return_exceptions=True,
-            )
+            # ready 그룹의 모든 (step, agent) 쌍을 병렬 실행
+            tasks = []
+            task_meta = []  # (step, agent_role, idx) 추적용
+            for step in ready:
+                step_id = step.get("step_id", 0)
+                agents = step.get("agents", [])
+                logger.info(
+                    f"[Execute] Step {step_id}: agents={agents}, "
+                    f"purpose={step.get('purpose', '')}, depends_on={step.get('depends_on')}"
+                )
+                for idx, role in enumerate(agents):
+                    tasks.append(_run_step_agent(step, role, idx))
+                    task_meta.append((step, role, idx))
 
-            # 결과 수집
-            step_results = []
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # 결과를 step별로 그룹화
+            step_results_map: dict[int, list[str]] = {}
             for i, res in enumerate(results):
+                step, role, idx = task_meta[i]
+                step_id = step.get("step_id", 0)
+
                 if isinstance(res, Exception):
-                    agent_role = agents[i] if i < len(agents) else "unknown"
-                    tool_name = _ROLE_TO_TOOL_NAME.get(agent_role, f"unknown_{agent_role}")
+                    tool_name = _ROLE_TO_TOOL_NAME.get(role, f"unknown_{role}")
                     result_text = f"Sub-agent error: {str(res)}"
-                    logger.error(f"[Execute] Step {step_id}, agent '{agent_role}' 예외: {res}")
+                    logger.error(f"[Execute] Step {step_id}, agent '{role}' 예외: {res}")
                 else:
-                    tool_name, result_text = res
+                    step_id, _, tool_name, result_text = res
 
-                step_results.append(result_text)
-
-                # ToolMessage로 변환 (SSE 이벤트 호환)
-                call_id = f"step{step_id}_{tool_name}_{i}"
+                step_results_map.setdefault(step_id, []).append(result_text)
+                call_id = f"step{step_id}_{tool_name}_{idx}"
                 all_tool_messages.append(ToolMessage(
-                    content=result_text,
-                    name=tool_name,
-                    tool_call_id=call_id,
+                    content=result_text, name=tool_name, tool_call_id=call_id,
                 ))
 
-            # 이 step의 결과를 축적
-            accumulated_context[step_id] = "\n\n".join(step_results)
-
-            logger.info(
-                f"[Execute] Step {step_id} 완료: {len(agents)}개 agent, "
-                f"결과 총 {len(accumulated_context[step_id])}자"
-            )
+            # 완료된 step들의 결과를 축적
+            for step in ready:
+                step_id = step.get("step_id", 0)
+                accumulated_context[step_id] = "\n\n".join(step_results_map.get(step_id, []))
+                logger.info(
+                    f"[Execute] Step {step_id} 완료: "
+                    f"결과 총 {len(accumulated_context[step_id])}자"
+                )
 
         # 타겟 정보를 state에 저장 (report_setup_node에서 사용)
         target_info = {

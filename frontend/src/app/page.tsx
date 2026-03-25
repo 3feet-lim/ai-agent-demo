@@ -291,6 +291,39 @@ export default function Home() {
                   });
                 }
 
+                // 실행 계획 수신 → progressSteps에 계획 표시
+                if (parsed.execution_plan) {
+                  const agentLabels: Record<string, string> = {
+                    resource: "🖥️ 서버/서비스 상태 확인",
+                    metric: "📈 성능 지표 수집",
+                    log: "📋 로그 수집",
+                    network: "🌐 네트워크 조사",
+                  };
+                  const plan = parsed.execution_plan;
+                  const steps = plan.steps || [];
+                  const planSteps: ProgressStep[] = [];
+                  for (const step of steps) {
+                    const agents = (step.agents || [])
+                      .map((a: string) => agentLabels[a] || a)
+                      .join(" + ");
+                    const depLabel = step.depends_on != null ? ` (Step ${step.depends_on} 완료 후)` : " (바로 시작)";
+                    planSteps.push({
+                      type: "phase",
+                      label: `📌 Step ${step.step_id}: ${agents}${depLabel}`,
+                      timestamp: nowTimestamp(),
+                    });
+                  }
+                  setMessages((prev) => {
+                    const updated = [...prev];
+                    const last = updated[updated.length - 1];
+                    if (last?.role === "assistant") {
+                      const existing = last.progressSteps || [];
+                      updated[updated.length - 1] = { ...last, progressSteps: [...existing, ...planSteps] };
+                    }
+                    return updated;
+                  });
+                }
+
                 // 도구 호출 이력 (최종)
                 if (parsed.tool_trace) {
                   setMessages((prev) => {

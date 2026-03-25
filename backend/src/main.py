@@ -201,6 +201,9 @@ async def chat(request: ChatRequest, x_user_id: Optional[str] = Header(None)):
                     elif event_type == "mcp_tool_end":
                         yield f"data: {json.dumps({'mcp_tool_end': event.get('display', event['name']), 'mcp_tool_success': event.get('success', True)})}\n\n"
 
+                    elif event_type == "execution_plan":
+                        yield f"data: {json.dumps({'execution_plan': event['plan']})}\n\n"
+
                     elif event_type == "token":
                         token = event["content"]
                         full_response.append(token)
