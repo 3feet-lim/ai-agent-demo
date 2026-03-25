@@ -423,19 +423,51 @@ class BedrockAgent:
         current_phase: str = ""  # 현재 노드 추적 (중복 방지)
 
         try:
-            async for msg, metadata in self._main_graph.astream(
-                {"messages": messages},
-                config={"recursion_limit": 15},
-                stream_mode="messages",
-            ):
-                # MCP 개별 도구 이벤트 큐 drain
-                while not mcp_event_queue.empty():
-                    try:
-                        evt = mcp_event_queue.get_nowait()
-                        yield evt
-                    except asyncio.QueueEmpty:
-                        break
+            # astream 이벤트와 MCP 큐 이벤트를 병합하기 위해
+            # astream을 별도 태스크로 실행하고, 통합 큐로 합침
+            merged_queue: asyncio.Queue = asyncio.Queue()
+            _STREAM_END = object()
 
+            async def _pump_stream():
+                """astream 이벤트를 merged_queue로 펌핑"""
+                try:
+                    async for msg, metadata in self._main_graph.astream(
+                        {"messages": messages},
+                        config={"recursion_limit": 15},
+                        stream_mode="messages",
+                    ):
+                        await merged_queue.put(("stream", msg, metadata))
+                except Exception as e:
+                    await merged_queue.put(("error", e, None))
+                finally:
+                    await merged_queue.put(("end", _STREAM_END, None))
+
+            async def _pump_mcp():
+                """MCP 이벤트 큐를 merged_queue로 펌핑"""
+                while True:
+                    evt = await mcp_event_queue.get()
+                    if evt is _STREAM_END:
+                        break
+                    await merged_queue.put(("mcp", evt, None))
+
+            stream_task = asyncio.create_task(_pump_stream())
+            mcp_task = asyncio.create_task(_pump_mcp())
+
+            while True:
+                kind, payload, metadata = await merged_queue.get()
+
+                if kind == "mcp":
+                    yield payload
+                    continue
+                if kind == "error":
+                    raise payload
+                if kind == "end":
+                    # 스트림 종료 → MCP 펌프도 종료 신호
+                    await mcp_event_queue.put(_STREAM_END)
+                    break
+
+                # kind == "stream" — 기존 astream 메시지 처리
+                msg = payload
                 node = metadata.get("langgraph_node", "")
 
                 # 노드 전환 시 phase 이벤트 발행
@@ -521,12 +553,8 @@ class BedrockAgent:
                     yield {"type": "tool_end", "name": tool_name,
                            "display": display, "success": not is_error}
 
-            # 루프 종료 후 남은 MCP 이벤트 drain
-            while not mcp_event_queue.empty():
-                try:
-                    yield mcp_event_queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
+            # 태스크 정리
+            await asyncio.gather(stream_task, mcp_task, return_exceptions=True)
 
             total_time = time.monotonic() - stream_start
             logger.info(f"[{cid}] 완료: {total_time:.1f}s, sub-agent 호출 {tool_call_count}회, "
