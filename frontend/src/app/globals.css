@@ -459,18 +459,45 @@ body {
   text-decoration: underline;
 }
 
-/* 단계 진행 상태 표시 */
-.phase-status {
+/* 진행 과정 누적 표시 */
+.progress-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0;
+}
+
+.progress-step {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
-  margin-bottom: 8px;
-  font-size: 13px;
+  padding: 4px 12px;
+  font-size: 12px;
   color: var(--text-secondary);
+  transition: opacity 0.2s;
 }
 
-/* 도구 실행 중 표시 */
+.progress-step.active {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.progress-step.active .progress-step-icon {
+  animation: spin 2s linear infinite;
+}
+
+.progress-step-label {
+  flex: 1;
+}
+
+.progress-step-time {
+  font-size: 10px;
+  color: var(--text-secondary);
+  opacity: 0.6;
+  font-family: "SF Mono", "Consolas", "Monaco", monospace;
+}
+
+/* 도구 실행 중 표시 (하위 호환) */
 .tool-activity {
   display: flex;
   align-items: center;

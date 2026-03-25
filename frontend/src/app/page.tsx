@@ -43,6 +43,12 @@ function nowTimestamp(): string {
   return d.toLocaleTimeString("ko-KR", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
+interface ProgressStep {
+  type: "phase" | "tool_start" | "tool_end";
+  label: string;
+  timestamp: string;
+}
+
 interface Message {
   role: string;
   content: string;
@@ -51,6 +57,7 @@ interface Message {
   activeTools?: string[];
   phaseMessage?: string;
   timestamp?: string;
+  progressSteps?: ProgressStep[];
 }
 
 interface Conversation {
@@ -212,41 +219,43 @@ export default function Home() {
                   });
                 }
 
-                // 단계 진행 상태 표시
+                // 단계 진행 상태 표시 → progressSteps에 누적
                 if (parsed.phase) {
                   setMessages((prev) => {
                     const updated = [...prev];
                     const last = updated[updated.length - 1];
                     if (last?.role === "assistant") {
-                      updated[updated.length - 1] = { ...last, phaseMessage: parsed.phase };
+                      const steps: ProgressStep[] = [...(last.progressSteps || [])];
+                      steps.push({ type: "phase", label: parsed.phase, timestamp: nowTimestamp() });
+                      updated[updated.length - 1] = { ...last, progressSteps: steps };
                     }
                     return updated;
                   });
                 }
 
-                // 도구 호출 시작: 실행 중인 도구 표시
+                // 도구 호출 시작 → progressSteps에 누적
                 if (parsed.tool_start) {
                   setMessages((prev) => {
                     const updated = [...prev];
                     const last = updated[updated.length - 1];
                     if (last?.role === "assistant") {
-                      const active = [...(last.activeTools || []), parsed.tool_start];
-                      updated[updated.length - 1] = { ...last, activeTools: active };
+                      const steps: ProgressStep[] = [...(last.progressSteps || [])];
+                      steps.push({ type: "tool_start", label: parsed.tool_start, timestamp: nowTimestamp() });
+                      updated[updated.length - 1] = { ...last, progressSteps: steps };
                     }
                     return updated;
                   });
                 }
 
-                // 도구 호출 완료: 실행 중 목록에서 제거
+                // 도구 호출 완료 → progressSteps에 누적
                 if (parsed.tool_end) {
                   setMessages((prev) => {
                     const updated = [...prev];
                     const last = updated[updated.length - 1];
                     if (last?.role === "assistant") {
-                      const active = (last.activeTools || []).filter(
-                        (t: string) => t !== parsed.tool_end
-                      );
-                      updated[updated.length - 1] = { ...last, activeTools: active };
+                      const steps: ProgressStep[] = [...(last.progressSteps || [])];
+                      steps.push({ type: "tool_end", label: parsed.tool_end, timestamp: nowTimestamp() });
+                      updated[updated.length - 1] = { ...last, progressSteps: steps };
                     }
                     return updated;
                   });
@@ -261,13 +270,13 @@ export default function Home() {
                       updated[updated.length - 1] = {
                         ...last,
                         toolTrace: parsed.tool_trace,
-                        activeTools: [],
                       };
                     }
                     return updated;
                   });
                 }
 
+                // 토큰 수신 → 첫 토큰에서 progressSteps 제거, 답변만 스트리밍
                 if (parsed.token) {
                   setMessages((prev) => {
                     const updated = [...prev];
@@ -276,7 +285,7 @@ export default function Home() {
                       updated[updated.length - 1] = {
                         ...last,
                         content: last.content + parsed.token,
-                        phaseMessage: undefined,
+                        progressSteps: undefined,
                       };
                     }
                     return updated;

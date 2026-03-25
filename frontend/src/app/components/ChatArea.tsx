@@ -37,6 +37,12 @@ SyntaxHighlighter.registerLanguage("python", python);
 SyntaxHighlighter.registerLanguage("javascript", javascript);
 SyntaxHighlighter.registerLanguage("typescript", typescript);
 
+interface ProgressStep {
+  type: "phase" | "tool_start" | "tool_end";
+  label: string;
+  timestamp: string;
+}
+
 interface Message {
   role: string;
   content: string;
@@ -45,6 +51,7 @@ interface Message {
   activeTools?: string[];
   phaseMessage?: string;
   timestamp?: string;
+  progressSteps?: ProgressStep[];
 }
 
 interface ChatAreaProps {
@@ -257,17 +264,35 @@ export default function ChatArea({ messages, isLoading, isStreaming }: ChatAreaP
                 ))}
               </div>
             )}
-            {/* 단계 진행 상태 표시 */}
-            {msg.role === "assistant" && msg.phaseMessage && !msg.content && (
-              <div className="phase-status">
-                <span>{msg.phaseMessage}</span>
-              </div>
-            )}
-            {/* 도구 실행 중 표시 */}
-            {msg.role === "assistant" && msg.activeTools && msg.activeTools.length > 0 && (
-              <div className="tool-activity">
-                <span className="tool-activity-icon">⚙️</span>
-                <span>{msg.activeTools[msg.activeTools.length - 1]} 실행 중...</span>
+            {/* 진행 과정 누적 표시 (답변 스트리밍 시작 전까지만) */}
+            {msg.role === "assistant" && msg.progressSteps && msg.progressSteps.length > 0 && !msg.content && (
+              <div className="progress-steps">
+                {msg.progressSteps.map((step, i) => {
+                  const isLast = i === msg.progressSteps!.length - 1;
+                  let icon = "";
+                  let className = "progress-step";
+                  if (step.type === "phase") {
+                    icon = "📌";
+                  } else if (step.type === "tool_start") {
+                    icon = isLast ? "⚙️" : "✅";
+                    if (isLast) className += " active";
+                  } else if (step.type === "tool_end") {
+                    icon = "✅";
+                  }
+                  return (
+                    <div key={i} className={className}>
+                      <span className="progress-step-icon">{icon}</span>
+                      <span className="progress-step-label">
+                        {step.type === "tool_start" && isLast
+                          ? `${step.label} 실행 중...`
+                          : step.type === "tool_end"
+                          ? `${step.label} 완료`
+                          : step.label}
+                      </span>
+                      <span className="progress-step-time">{step.timestamp}</span>
+                    </div>
+                  );
+                })}
               </div>
             )}
             {/* 스트리밍 시작 직후 아직 내용이 없을 때 로딩 표시 */}
