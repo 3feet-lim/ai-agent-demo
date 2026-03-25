@@ -416,7 +416,7 @@ class MCPToolWrapper(BaseTool):
 
             enriched = self._enrich_with_stats(raw)
 
-            MAX_TOOL_RESPONSE_CHARS = 30000
+            MAX_TOOL_RESPONSE_CHARS = 15000
             if len(enriched) > MAX_TOOL_RESPONSE_CHARS:
                 logger.warning(
                     f"[Truncation] {self.name} 응답 잘림: "

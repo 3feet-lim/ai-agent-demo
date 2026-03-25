@@ -106,10 +106,10 @@ class BedrockAgent:
 
         # Sub-agent 그래프 생성
         sub_configs = {
-            "metric": (build_metric_agent_prompt, 40),
-            "log": (build_log_agent_prompt, 40),
-            "resource": (build_resource_agent_prompt, 30),
-            "network": (build_network_agent_prompt, 40),
+            "metric": (build_metric_agent_prompt, 20),
+            "log": (build_log_agent_prompt, 25),
+            "resource": (build_resource_agent_prompt, 20),
+            "network": (build_network_agent_prompt, 25),
         }
 
         self._main_tools = []

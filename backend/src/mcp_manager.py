@@ -43,8 +43,8 @@ class MCPServerConnection:
         self._session_context = None
         self._connected = False
         # MCP ClientSession은 동시 call_tool을 안전하게 처리하지 못할 수 있으므로
-        # 서버별 세마포어로 직렬화하여 세션 deadlock/hang 방지
-        self._call_semaphore = asyncio.Semaphore(1)
+        # 서버별 세마포어로 동시 호출 수를 제한하여 세션 deadlock/hang 방지
+        self._call_semaphore = asyncio.Semaphore(3)
 
     @property
     def is_connected(self) -> bool:

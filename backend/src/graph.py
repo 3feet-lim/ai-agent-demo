@@ -242,7 +242,7 @@ def build_main_graph(
 
             tool_map = {tool.name: tool for tool in main_tools}
             loop_count = 0
-            max_loops = 6
+            max_loops = 3
 
             while hasattr(result, 'tool_calls') and result.tool_calls and loop_count < max_loops:
                 loop_count += 1
@@ -349,50 +349,90 @@ def build_main_graph(
         return "plan"
 
 
-    # ── Phase 1.5: 실행 계획 수립 (plan) — LLM이 sub-agent 실행 순서 결정 ──
+    # ── Phase 1.5: 실행 계획 수립 (plan) — 규칙 기반 ──
     async def plan_node(state: MessagesState) -> MessagesState:
-        """analyze/resolve 결과를 기반으로 sub-agent 실행 계획을 수립.
+        """analyze/resolve 결과를 기반으로 sub-agent 실행 계획을 규칙 기반으로 수립.
 
-        LLM 1회 호출로 어떤 sub-agent를 어떤 순서로 실행할지 결정.
+        LLM 호출 없이 collection_types와 category로 결정론적으로 계획 생성.
         결과를 __EXECUTION_PLAN__ SystemMessage로 state에 저장.
         """
         analyzed = read_state_meta_json(state, "ANALYZE_RESULT") or {}
         resolved = read_state_meta_json(state, "LOCKED_TARGETS")
 
-        plan_prompt = build_plan_prompt(analyzed, resolved)
+        intent = analyzed.get("intent", "리소스 정보를 수집하세요.")
+        category = analyzed.get("category", "general")
+        collection_types = analyzed.get("collection_types", ["resource"])
+        if not collection_types:
+            collection_types = ["resource"]
 
-        try:
-            response = await main_llm.ainvoke([
-                SystemMessage(content=plan_prompt),
-                HumanMessage(content="위 컨텍스트를 기반으로 실행 계획을 JSON으로 작성하세요."),
-            ])
-            raw = _extract_text_from_content(response.content).strip()
-            # ```json ... ``` 블록이 있으면 추출
-            json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', raw, re.DOTALL)
-            if json_match:
-                raw = json_match.group(1)
-            plan = json.loads(raw)
-            if not isinstance(plan, dict) or "steps" not in plan:
-                raise ValueError("plan에 steps 필드가 없음")
-        except Exception as e:
-            logger.warning(f"[Plan] LLM 계획 수립 실패, 기본 계획 사용: {e}")
-            # 폴백: collection_types 기반으로 단일 step 기본 계획 생성
-            collection_types = analyzed.get("collection_types", ["resource"])
-            if not collection_types:
-                collection_types = ["resource"]
-            plan = {
-                "steps": [{
-                    "step_id": 0,
-                    "agents": collection_types,
-                    "purpose": "데이터 수집 (기본 계획)",
-                    "task_template": analyzed.get("intent", "리소스 정보를 수집하세요."),
-                    "depends_on": None,
-                }]
-            }
+        # 타겟 정보
+        targets = resolved.get("targets", []) if resolved else []
+        target_names = ", ".join(t.get("name", "") for t in targets) or "전체"
 
-        steps = plan.get("steps", [])
+        # 규칙 기반 계획 생성
+        has_resource = "resource" in collection_types
+        has_log = "log" in collection_types
+        has_metric = "metric" in collection_types
+        has_network = "network" in collection_types
+        parallel_agents = [a for a in collection_types if a in ("log", "metric")]
+
+        steps = []
+        # resource/network가 필요하고 log/metric도 필요하면 → 2단계 (resource 먼저)
+        if has_resource and parallel_agents:
+            steps.append({
+                "step_id": 0,
+                "agents": ["resource"],
+                "purpose": f"{target_names} 리소스 상태 조회 및 관련 로그 그룹 탐색",
+                "task_template": intent,
+                "depends_on": None,
+            })
+            steps.append({
+                "step_id": 1,
+                "agents": parallel_agents,
+                "purpose": " + ".join(
+                    {"log": "로그 수집", "metric": "메트릭 수집"}.get(a, a)
+                    for a in parallel_agents
+                ) + " (병렬)",
+                "task_template": f"이전 단계에서 확인된 리소스 정보를 사용하여 {intent}",
+                "depends_on": 0,
+            })
+            if has_network:
+                steps.append({
+                    "step_id": 2,
+                    "agents": ["network"],
+                    "purpose": "네트워크 경로 및 보안 규칙 조사",
+                    "task_template": f"이전 단계에서 확인된 정보를 기반으로 네트워크를 조사하세요. {intent}",
+                    "depends_on": 0,
+                })
+        elif has_network and has_resource:
+            # resource → network 순서
+            steps.append({
+                "step_id": 0,
+                "agents": ["resource"],
+                "purpose": f"{target_names} 리소스 및 VPC/서브넷 정보 조회",
+                "task_template": intent,
+                "depends_on": None,
+            })
+            steps.append({
+                "step_id": 1,
+                "agents": ["network"],
+                "purpose": "네트워크 경로 및 보안 규칙 조사",
+                "task_template": f"이전 단계에서 확인된 VPC 정보를 기반으로 조사하세요. {intent}",
+                "depends_on": 0,
+            })
+        else:
+            # 단일 step: 모든 agent 병렬
+            steps.append({
+                "step_id": 0,
+                "agents": collection_types,
+                "purpose": intent,
+                "task_template": intent,
+                "depends_on": None,
+            })
+
+        plan = {"steps": steps}
         logger.info(
-            f"[Plan] 실행 계획 수립 완료: {len(steps)}개 step, "
+            f"[Plan] 규칙 기반 계획 수립: {len(steps)}개 step, "
             f"agents={[s.get('agents', []) for s in steps]}"
         )
 
