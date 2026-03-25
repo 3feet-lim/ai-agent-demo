@@ -481,6 +481,10 @@ def build_main_graph(
             t["name"] for t in targets
             if t.get("type") == "cluster" and t.get("name")
         ]
+        logger.info(
+            f"[Execute] 가드레일 설정: allowed_clusters={cluster_names}, "
+            f"targets={json.dumps(targets, ensure_ascii=False)}"
+        )
         for tool in all_tools:
             if isinstance(tool, MCPToolWrapper):
                 tool.allowed_clusters = cluster_names if cluster_names else None

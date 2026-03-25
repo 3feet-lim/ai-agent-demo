@@ -274,7 +274,10 @@ class MCPToolWrapper(BaseTool):
                         f"쿼리에 dimension_ClusterName 또는 cluster 라벨로 "
                         f"해당 클러스터를 반드시 포함하세요. 차단된 expr: {expr[:150]}"
                     )
-                    logger.warning(f"[가드레일 차단] {self.name}: {expr[:150]}")
+                    logger.warning(
+                        f"[가드레일 차단] {self.name}: allowed_clusters={self.allowed_clusters}, "
+                        f"expr={expr[:200]}"
+                    )
                     return blocked_msg
 
             # 알람 시간 범위 강제 덮어쓰기
@@ -337,7 +340,7 @@ class MCPToolWrapper(BaseTool):
                 raw = str(result)
 
             # MCP 응답 결과 로깅 (디버깅용, 앞부분만)
-            logger.info(f"MCP tool {self.name} result ({len(raw)}자): {raw[:500]}")
+            logger.debug(f"MCP tool {self.name} result ({len(raw)}자): {raw[:500]}")
 
             # storedBytes는 AWS API가 부정확한 값(0)을 반환하는 경우가 있어
             # LLM이 이를 근거로 로그 없음 판단을 내리는 것을 방지
