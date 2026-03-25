@@ -234,7 +234,7 @@ def build_main_graph(
 
         resolve_messages = [
             SystemMessage(content=resolve_prompt),
-            HumanMessage(content="위 식별자들을 검증해주세요."),
+            HumanMessage(content=f"## 사용자 원본 메시지\n{user_msg}\n\n위 식별자들을 검증해주세요."),
         ]
 
         try:
