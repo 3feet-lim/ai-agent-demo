@@ -16,15 +16,30 @@ _REPORT_FORMAT_REGISTRY: dict[str, list[str]] = {
     "incident": [
         "",
         "## Report Format: 🔍 장애 분석 리포트",
-        "🕐 분석 시간 → 🎯 대상 → 📅 기간 → 현상 요약 → 메트릭 분석 → 로그 분석",
-        "→ 원인 분석 → 조치 방안 (🔴긴급 / 🟡권장 / 🟢참고)",
         "",
-        "### 섹션별 작성 가이드",
-        "• 현상 요약: 어떤 리소스에서 어떤 이상이 감지되었는지 1~2문장.",
-        "• 메트릭 분석: 수집된 메트릭 데이터에서 이상 수치를 구체적으로 인용.",
-        "• 로그 분석: 에러/경고 로그의 핵심 메시지를 인용. 타임스탬프 포함.",
-        "• 원인 분석: 메트릭+로그 데이터에서 도출 가능한 원인만 기술. 데이터 없으면 '확인 필요'.",
-        "• 조치 방안: 긴급도별로 분류. 데이터 기반 조치만 제안.",
+        "### 리포트 최상단에 아래 요약 테이블을 반드시 포함할 것",
+        "| 항목 | 내용 |",
+        "|------|------|",
+        "| 발생일시 | {current_time} |",
+        "| 대상 계정 | {account_info} |",
+        "| 대상 서비스그룹 | 퍼블릭 샌드박스 관리 시스템 |",
+        "| 환경 구분 | 개발 환경 |",
+        "| 업무 부서 | 클라우드플랫폼부 안진모 대리 |",
+        "| MSP 담당자 | 클라우드플랫폼부 자체 관리 시스템 |",
+        "| 대상 자원 정보 | {target_resources} |",
+        "| 장애/이슈 현재 Status | (수집 데이터 기반 현재 상황 1~2문장 요약) |",
+        "| 원인 분석 | (수집 데이터 기반 근본 원인 1~2문장 요약) |",
+        "| 해결방안 가이드 | (수집 데이터 기반 해결 방안 1~2문장 요약) |",
+        "",
+        "### 상세 리포트 작성 규칙",
+        "• 위 요약 테이블과 중복되는 내용은 상세 리포트에 포함하지 않는다.",
+        "• 요약에서 다루지 못한 상세 분석만 추가 설명한다.",
+        "• 상세 설명이 불필요하면 작성하지 않는다.",
+        "",
+        "### 상세 섹션 가이드 (필요한 경우에만 작성)",
+        "• 메트릭 상세: 수집된 메트릭에서 이상 수치를 구체적으로 인용.",
+        "• 로그 상세: 에러/경고 로그의 핵심 메시지를 인용. 타임스탬프 포함.",
+        "• 조치 방안 상세: 긴급도별 분류 (🔴긴급 / 🟡권장 / 🟢참고).",
     ],
     "status_list": [
         "",
@@ -81,6 +96,8 @@ def build_report_prompt(
     intent: str = "",
     category: str = "",
     report_type: str | None = None,
+    account_info: str = "",
+    target_resources: str = "",
 ) -> str:
     """Phase 3: 리포트 작성 프롬프트 (수집된 데이터 기반).
 
@@ -91,6 +108,8 @@ def build_report_prompt(
         intent: analyze 결과의 intent (사용자 의도 자연어 설명)
         category: analyze 결과의 category (동적 카테고리)
         report_type: 직접 지정 시 사용. None이면 intent/category에서 자동 결정.
+        account_info: 대상 계정 정보 (Account ID / Account Name)
+        target_resources: 대상 자원 정보 (name, arn 등)
     """
     time_info = get_current_time_info()
 
@@ -132,6 +151,15 @@ def build_report_prompt(
 
     # 레지스트리에서 리포트 형식 추가
     format_lines = _REPORT_FORMAT_REGISTRY.get(report_type, [])
-    base.extend(format_lines)
+    # 플레이스홀더 치환
+    replacements = {
+        "{current_time}": time_info.split("현재 시각: ")[-1] if "현재 시각: " in time_info else time_info,
+        "{account_info}": account_info or "(미확인)",
+        "{target_resources}": target_resources or "(수집 데이터에서 확인)",
+    }
+    for line in format_lines:
+        for k, v in replacements.items():
+            line = line.replace(k, v)
+        base.append(line)
 
     return "\n".join(base)

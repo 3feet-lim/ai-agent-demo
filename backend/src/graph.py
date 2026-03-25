@@ -646,7 +646,28 @@ def build_main_graph(
         time_range = target_info.get("time_range") or analyzed.get("time_range")
 
         # analyze의 intent/category를 직접 전달하여 리포트 형식 자동 결정
-        report_prompt = build_report_prompt(intent=intent, category=category)
+        # account 정보 조회
+        profile_name = target_info.get("profile", "")
+        account = profile_resolver.find_by_profile(profile_name) if profile_name else None
+        if not account:
+            account = profile_resolver.resolve_account(user_msg)
+        account_info = f"{account.account_id} / {account.alias}" if account else ""
+
+        # 대상 자원 정보 문자열
+        target_resource_parts = []
+        for t in targets:
+            t_name = t.get("name", "")
+            t_arn = t.get("arn", "")
+            if t_arn:
+                target_resource_parts.append(f"{t_name} (`{t_arn}`)")
+            elif t_name:
+                target_resource_parts.append(t_name)
+        target_resources = ", ".join(target_resource_parts)
+
+        report_prompt = build_report_prompt(
+            intent=intent, category=category,
+            account_info=account_info, target_resources=target_resources,
+        )
 
         # step별 purpose 매핑 구성 (실행 계획에서 step_id → purpose)
         step_purposes: dict[int, str] = {}

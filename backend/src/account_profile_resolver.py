@@ -138,6 +138,13 @@ class AccountProfileResolver:
                 return account
         return None
 
+    def find_by_profile(self, profile: str) -> Optional[AccountInfo]:
+        """profile 이름으로 계정 정보를 직접 조회."""
+        for account in self._accounts:
+            if account.profile == profile:
+                return account
+        return None
+
     def get_known_aliases(self) -> list[str]:
         """프롬프트 주입용: 모든 계정의 alias + matchers 목록 반환.
 
