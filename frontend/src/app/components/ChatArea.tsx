@@ -240,7 +240,7 @@ export default function ChatArea({ messages, isLoading, isStreaming }: ChatAreaP
     <div className="messages-container" ref={containerRef}>
       {messages.length === 0 && !isLoading && (
         <div className="welcome-message">
-          <h2>안녕하세요, Olly입니다!</h2>
+          <h2>안녕하세요, P리전 장애/이슈 분석 에이전트입니다!</h2>
           <p>무엇을 도와드릴까요? 질문을 입력해 주세요.</p>
         </div>
       )}
@@ -248,7 +248,7 @@ export default function ChatArea({ messages, isLoading, isStreaming }: ChatAreaP
       {messages.map((msg, idx) => (
         <div key={idx} className={`message ${msg.role}`}>
           <div className="message-avatar">
-            {msg.role === "user" ? "U" : "Olly"}
+            {msg.role === "user" ? "U" : "P"}
           </div>
           <div className="message-content">
             {/* 첨부 이미지 표시 */}
@@ -406,7 +406,7 @@ export default function ChatArea({ messages, isLoading, isStreaming }: ChatAreaP
 
       {isLoading && (
         <div className="message assistant">
-          <div className="message-avatar">Olly</div>
+          <div className="message-avatar">P</div>
           <div className="message-content">
             <div className="typing-indicator">
               <span />

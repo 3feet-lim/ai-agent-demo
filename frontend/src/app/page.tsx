@@ -420,7 +420,7 @@ export default function Home() {
       />
       <main className="chat-container">
         <header className={`chat-header${sidebarOpen ? "" : " sidebar-collapsed"}`}>
-          <h1>Olly Agent</h1>
+          <h1>P리전 장애/이슈 분석 에이전트</h1>
           <span className="model-badge">Claude Sonnet 4.5</span>
         </header>
         <ErrorBoundary>

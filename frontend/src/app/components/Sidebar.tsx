@@ -39,7 +39,7 @@ export default function Sidebar({
               className="sidebar-logo"
               priority
             />
-            <span className="sidebar-title">Olly Agent</span>
+            <span className="sidebar-title">P리전 장애/이슈 분석 에이전트</span>
           </div>
           <button className="new-chat-btn" onClick={onNewChat}>
             + 새 대화

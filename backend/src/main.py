@@ -47,7 +47,7 @@ async def _init_mcp_background():
 async def lifespan(app: FastAPI):
     """애플리케이션 라이프사이클 관리"""
     # 시작 시 초기화
-    logger.info("Starting Olly Agent...")
+    logger.info("Starting P리전 장애/이슈 분석 에이전트...")
     await get_conversation_store()
     
     # MCP 연결을 백그라운드 태스크로 실행
@@ -64,7 +64,7 @@ async def lifespan(app: FastAPI):
 
     yield
     # 종료 시 정리
-    logger.info("Shutting down Olly Agent...")
+    logger.info("Shutting down P리전 장애/이슈 분석 에이전트...")
 
     # 알람 분석 워커 종료
     await stop_alert_workers()
@@ -83,7 +83,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Olly Agent",
+    title="P리전 장애/이슈 분석 에이전트",
     description="LangChain + LangGraph + AWS Bedrock 기반 Observability AI 에이전트",
     version="1.0.0",
     lifespan=lifespan

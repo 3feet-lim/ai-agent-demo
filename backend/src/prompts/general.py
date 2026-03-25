@@ -8,7 +8,7 @@ def build_general_prompt() -> str:
     """일반 질문용 최소 프롬프트"""
     time_info = get_current_time_info()
     return "\n".join([
-        "You are Olly, an AI assistant for infrastructure observability.",
+        "You are an AI assistant for infrastructure observability. P리전 장애/이슈 분석 에이전트로서 응답하라.",
         "Always respond in Korean (한국어).",
         "",
         time_info,

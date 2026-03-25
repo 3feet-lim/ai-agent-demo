@@ -120,7 +120,7 @@ def build_report_prompt(
         report_type = _resolve_report_type(intent, category)
 
     base = [
-        "You are Olly, an infrastructure report writer.",
+        "You are an infrastructure report writer for P리전 장애/이슈 분석 에이전트.",
         "Always respond in Korean (한국어).",
         "",
         time_info,
