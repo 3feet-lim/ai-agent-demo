@@ -459,31 +459,48 @@ body {
   text-decoration: underline;
 }
 
-/* 진행 과정 누적 표시 */
+/* 진행 과정 타임라인 표시 */
 .progress-steps {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 8px 0;
+  gap: 2px;
+  padding: 12px 0;
 }
 
 .progress-step {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 12px;
-  font-size: 12px;
+  padding: 5px 12px;
+  font-size: 12.5px;
   color: var(--text-secondary);
   transition: opacity 0.2s;
+  border-left: 2px solid var(--border-color, #e0e3e8);
+  margin-left: 8px;
+}
+
+.progress-step.phase {
+  border-left-color: transparent;
+  margin-left: 0;
+  padding: 8px 12px 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
 .progress-step.active {
   color: var(--text-primary);
   font-weight: 500;
+  border-left-color: #3b82f6;
 }
 
 .progress-step.active .progress-step-icon {
-  animation: spin 2s linear infinite;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 
 .progress-step-label {
@@ -495,6 +512,24 @@ body {
   color: var(--text-secondary);
   opacity: 0.6;
   font-family: "SF Mono", "Consolas", "Monaco", monospace;
+}
+
+/* MCP 개별 도구 호출 (하위 리스트) */
+.progress-step.mcp-tool {
+  margin-left: 24px;
+  padding: 2px 12px;
+  font-size: 11.5px;
+  border-left-color: var(--border-color, #e0e3e8);
+  opacity: 0.8;
+}
+
+.progress-step.mcp-tool .progress-step-icon {
+  font-size: 10px;
+}
+
+.progress-step.mcp-tool.active {
+  opacity: 1;
+  border-left-color: #60a5fa;
 }
 
 /* 도구 실행 중 표시 (하위 호환) */

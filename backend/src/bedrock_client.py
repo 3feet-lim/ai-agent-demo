@@ -337,13 +337,15 @@ class BedrockAgent:
 
     def _prepare_tools_for_request(
         self, message: str, time_window: Optional[tuple[str, str]],
+        event_queue=None,
     ):
-        """요청별 도구 설정 (시간 강제, 프로필 주입)"""
+        """요청별 도구 설정 (시간 강제, 프로필 주입, 이벤트 큐)"""
         resolved_profile = self._profile_resolver.resolve(message)
         for tool in self._all_tools:
             if isinstance(tool, MCPToolWrapper):
                 tool.enforced_time_window = time_window
                 tool.resolved_profile = resolved_profile
+                tool.event_queue = event_queue
 
     def _build_full_system_prompt(
         self, enforced_time_window: tuple[str, str] | None = None,
@@ -373,7 +375,10 @@ class BedrockAgent:
             original_time = f"{tz_match.group(1)} {tz_match.group(2)}" if tz_match else "?"
             logger.info(f"[{cid}] [시간 강제] 알람 시각: {original_time} {original_tz} → {time_window}")
 
-        self._prepare_tools_for_request(message, time_window)
+        # MCP 개별 도구 이벤트 전파용 큐
+        mcp_event_queue: asyncio.Queue = asyncio.Queue()
+
+        self._prepare_tools_for_request(message, time_window, event_queue=mcp_event_queue)
 
         system_prompt = self._build_full_system_prompt(enforced_time_window=time_window)
         current_history = history + [{"role": "user", "content": message}]
@@ -388,16 +393,25 @@ class BedrockAgent:
         )
         messages = self._trim_messages_by_tokens(messages)
 
-        # 노드별 사용자 표시 메시지
+        # 노드별 사용자 표시 메시지 (비전문가도 이해할 수 있도록)
         _NODE_PHASE_LABELS = {
-            "analyze": "🔍 사용자 요청을 분석하고 있습니다...",
-            "resolve": "🔎 대상 리소스를 확인하고 있습니다...",
-            "plan": "📋 실행 계획을 수립하고 있습니다...",
-            "execute_steps": "⚙️ 데이터를 수집하고 있습니다...",
-            "report_setup": "📊 수집 결과를 정리하고 있습니다...",
-            "report": "✍️ 리포트를 작성하고 있습니다...",
-            "direct_answer": "💬 응답을 생성하고 있습니다...",
-            "direct_answer_validation_fail": "⚠️ 확인 결과를 정리하고 있습니다...",
+            "analyze": "🔍 질문을 분석하여 어떤 정보가 필요한지 파악하고 있습니다...",
+            "resolve": "🔎 요청하신 서버/서비스가 실제로 존재하는지 확인하고 있습니다...",
+            "plan": "📋 어떤 순서로 정보를 수집할지 계획을 세우고 있습니다...",
+            "execute_steps": "⚙️ 계획에 따라 모니터링 데이터를 수집하고 있습니다...",
+            "report_setup": "📊 수집된 데이터를 분석 리포트로 정리하고 있습니다...",
+            "report": "✍️ 최종 분석 리포트를 작성하고 있습니다...",
+            "direct_answer": "💬 답변을 작성하고 있습니다...",
+            "direct_answer_validation_fail": "⚠️ 요청하신 리소스를 찾을 수 없어 안내를 준비하고 있습니다...",
+        }
+
+        # Sub-agent 도구명 → 비전문가용 한국어 설명
+        _TOOL_DISPLAY_NAMES = {
+            # Main → Sub-agent 호출
+            "collect_metrics": "📈 성능 지표(CPU, 메모리 등) 수집 에이전트",
+            "collect_logs": "📋 로그 수집 에이전트",
+            "check_resources": "🖥️ 서버/서비스 상태 확인 에이전트",
+            "investigate_network": "🌐 네트워크 연결 상태 조사 에이전트",
         }
 
         stream_start = time.monotonic()
@@ -413,6 +427,14 @@ class BedrockAgent:
                 config={"recursion_limit": 15},
                 stream_mode="messages",
             ):
+                # MCP 개별 도구 이벤트 큐 drain
+                while not mcp_event_queue.empty():
+                    try:
+                        evt = mcp_event_queue.get_nowait()
+                        yield evt
+                    except asyncio.QueueEmpty:
+                        break
+
                 node = metadata.get("langgraph_node", "")
 
                 # 노드 전환 시 phase 이벤트 발행
@@ -429,11 +451,13 @@ class BedrockAgent:
                             if tool_name and tool_name not in active_tools:
                                 active_tools.add(tool_name)
                                 tool_call_count += 1
+                                display = _TOOL_DISPLAY_NAMES.get(tool_name, tool_name)
                                 logger.info(
                                     f"[{cid}] Sub-agent 호출 #{tool_call_count}: {tool_name} "
                                     f"(경과: {time.monotonic() - stream_start:.1f}s)"
                                 )
                                 yield {"type": "tool_start", "name": tool_name,
+                                       "display": display,
                                        "args": tc.get("args", {})}
 
                     # report 또는 direct_answer 노드에서 나온 텍스트 토큰만 전달
@@ -479,19 +503,29 @@ class BedrockAgent:
                     if tool_name not in active_tools:
                         active_tools.add(tool_name)
                         tool_call_count += 1
+                        display = _TOOL_DISPLAY_NAMES.get(tool_name, tool_name)
                         logger.info(
                             f"[{cid}] Sub-agent 실행 #{tool_call_count}: {tool_name} "
                             f"(경과: {time.monotonic() - stream_start:.1f}s)"
                         )
-                        yield {"type": "tool_start", "name": tool_name, "args": {}}
+                        yield {"type": "tool_start", "name": tool_name,
+                               "display": display, "args": {}}
 
                     logger.info(
                         f"[{cid}] tool_end: {tool_name}, 결과 길이={len(result_str)}, "
                         f"에러={is_error} (경과: {time.monotonic() - stream_start:.1f}s)"
                     )
+                    display = _TOOL_DISPLAY_NAMES.get(tool_name, tool_name)
                     active_tools.discard(tool_name)
                     yield {"type": "tool_end", "name": tool_name,
-                           "success": not is_error}
+                           "display": display, "success": not is_error}
+
+            # 루프 종료 후 남은 MCP 이벤트 drain
+            while not mcp_event_queue.empty():
+                try:
+                    yield mcp_event_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
 
             total_time = time.monotonic() - stream_start
             logger.info(f"[{cid}] 완료: {total_time:.1f}s, sub-agent 호출 {tool_call_count}회, "

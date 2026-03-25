@@ -38,7 +38,7 @@ SyntaxHighlighter.registerLanguage("javascript", javascript);
 SyntaxHighlighter.registerLanguage("typescript", typescript);
 
 interface ProgressStep {
-  type: "phase" | "tool_start" | "tool_end";
+  type: "phase" | "tool_start" | "tool_end" | "mcp_tool_start" | "mcp_tool_end";
   label: string;
   timestamp: string;
 }
@@ -264,31 +264,50 @@ export default function ChatArea({ messages, isLoading, isStreaming }: ChatAreaP
                 ))}
               </div>
             )}
-            {/* 진행 과정 누적 표시 (답변 스트리밍 시작 전까지만) */}
+            {/* 진행 과정 타임라인 표시 (답변 스트리밍 시작 전까지만) */}
             {msg.role === "assistant" && msg.progressSteps && msg.progressSteps.length > 0 && !msg.content && (
               <div className="progress-steps">
                 {msg.progressSteps.map((step, i) => {
                   const isLast = i === msg.progressSteps!.length - 1;
                   let icon = "";
                   let className = "progress-step";
+                  let label = step.label;
+
                   if (step.type === "phase") {
-                    icon = "📌";
+                    icon = "";
+                    className += " phase";
                   } else if (step.type === "tool_start") {
-                    icon = isLast ? "⚙️" : "✅";
-                    if (isLast) className += " active";
+                    if (isLast) {
+                      icon = "⏳";
+                      className += " active";
+                      label = `${step.label} 실행 중...`;
+                    } else {
+                      icon = "✅";
+                      label = `${step.label} 완료`;
+                    }
                   } else if (step.type === "tool_end") {
                     icon = "✅";
+                    label = `${step.label} 완료`;
+                  } else if (step.type === "mcp_tool_start") {
+                    className += " mcp-tool";
+                    if (isLast) {
+                      icon = "⏳";
+                      className += " active";
+                      label = `${step.label} 조회 중...`;
+                    } else {
+                      icon = "✓";
+                      label = step.label;
+                    }
+                  } else if (step.type === "mcp_tool_end") {
+                    icon = "✓";
+                    className += " mcp-tool";
+                    label = step.label;
                   }
+
                   return (
                     <div key={i} className={className}>
                       <span className="progress-step-icon">{icon}</span>
-                      <span className="progress-step-label">
-                        {step.type === "tool_start" && isLast
-                          ? `${step.label} 실행 중...`
-                          : step.type === "tool_end"
-                          ? `${step.label} 완료`
-                          : step.label}
-                      </span>
+                      <span className="progress-step-label">{label}</span>
                       <span className="progress-step-time">{step.timestamp}</span>
                     </div>
                   );

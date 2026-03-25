@@ -187,13 +187,19 @@ async def chat(request: ChatRequest, x_user_id: Optional[str] = Header(None)):
                         yield f"data: {json.dumps({'phase': event['message']})}\n\n"
 
                     elif event_type == "tool_start":
-                        yield f"data: {json.dumps({'tool_start': event['name']})}\n\n"
+                        yield f"data: {json.dumps({'tool_start': event['name'], 'tool_start_display': event.get('display', event['name'])})}\n\n"
 
                     elif event_type == "tool_end":
-                        yield f"data: {json.dumps({'tool_end': event['name']})}\n\n"
+                        yield f"data: {json.dumps({'tool_end': event['name'], 'tool_end_display': event.get('display', event['name'])})}\n\n"
                         # 성공한 도구만 trace에 기록
                         if event.get("success", True):
                             tool_trace.append(event["name"])
+
+                    elif event_type == "mcp_tool_start":
+                        yield f"data: {json.dumps({'mcp_tool_start': event.get('display', event['name'])})}\n\n"
+
+                    elif event_type == "mcp_tool_end":
+                        yield f"data: {json.dumps({'mcp_tool_end': event.get('display', event['name']), 'mcp_tool_success': event.get('success', True)})}\n\n"
 
                     elif event_type == "token":
                         token = event["content"]

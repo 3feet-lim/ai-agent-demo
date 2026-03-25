@@ -65,6 +65,21 @@ def create_pydantic_model_from_schema(name: str, schema: dict) -> type[BaseModel
 
 # ── MCP 도구 래퍼 ──────────────────────────────────────────────
 
+# MCP 도구명 → 비전문가용 한국어 설명
+_MCP_TOOL_DISPLAY = {
+    "query_prometheus": "Prometheus 메트릭 조회",
+    "analyze_log_group": "로그 그룹 이상 패턴 분석",
+    "execute_log_insights_query": "로그 검색 쿼리 실행",
+    "describe_log_groups": "로그 그룹 목록 조회",
+    "get_metric_data": "CloudWatch 메트릭 조회",
+    "analyze_metric": "메트릭 추세 분석",
+    "get_active_alarms": "활성 알람 조회",
+    "get_alarm_history": "알람 이력 조회",
+    "call_aws": "AWS API 호출",
+    "list_prometheus_label_values": "Prometheus 라벨 값 조회",
+    "list_prometheus_metric_names": "Prometheus 메트릭 목록 조회",
+}
+
 class MCPToolWrapper(BaseTool):
     """MCP 도구를 LangChain BaseTool로 래핑"""
     name: str
@@ -76,6 +91,8 @@ class MCPToolWrapper(BaseTool):
     resolved_profile: Optional[str] = None
     # 타겟 클러스터 가드레일: 설정되면 PromQL에 해당 클러스터 필터가 없는 쿼리를 차단
     allowed_clusters: Optional[list[str]] = None
+    # 개별 MCP 도구 호출 이벤트를 상위로 전파하기 위한 큐
+    event_queue: Optional[Any] = None
 
     class Config:
         arbitrary_types_allowed = True
@@ -326,6 +343,12 @@ class MCPToolWrapper(BaseTool):
             kwargs.pop("ctx", None)
 
             logger.info(f"MCP tool {self.name} called with: {kwargs}")
+            # 개별 MCP 도구 실행 시작 이벤트 발행
+            if self.event_queue:
+                self.event_queue.put_nowait({
+                    "type": "mcp_tool_start", "name": self.name,
+                    "display": _MCP_TOOL_DISPLAY.get(self.name, self.name),
+                })
             result = await self.mcp_manager.execute_tool(self.mcp_tool.name, kwargs)
 
             if hasattr(result, 'content'):
@@ -360,9 +383,20 @@ class MCPToolWrapper(BaseTool):
                     + "\n\n...[⚠️ 응답이 너무 길어 잘렸습니다. "
                     "필요 시 범위를 좁혀 다시 조회하세요.]"
                 )
+            # 개별 MCP 도구 실행 완료 이벤트 발행
+            if self.event_queue:
+                self.event_queue.put_nowait({
+                    "type": "mcp_tool_end", "name": self.name, "success": True,
+                    "display": _MCP_TOOL_DISPLAY.get(self.name, self.name),
+                })
             return enriched
         except Exception as e:
             logger.error(f"Tool execution error for {self.name}: {e}")
+            if self.event_queue:
+                self.event_queue.put_nowait({
+                    "type": "mcp_tool_end", "name": self.name, "success": False,
+                    "display": _MCP_TOOL_DISPLAY.get(self.name, self.name),
+                })
             return f"Tool execution error: {str(e)}"
 
     def _run(self, **kwargs) -> str:

@@ -44,7 +44,7 @@ function nowTimestamp(): string {
 }
 
 interface ProgressStep {
-  type: "phase" | "tool_start" | "tool_end";
+  type: "phase" | "tool_start" | "tool_end" | "mcp_tool_start" | "mcp_tool_end";
   label: string;
   timestamp: string;
 }
@@ -235,12 +235,13 @@ export default function Home() {
 
                 // 도구 호출 시작 → progressSteps에 누적
                 if (parsed.tool_start) {
+                  const display = parsed.tool_start_display || parsed.tool_start;
                   setMessages((prev) => {
                     const updated = [...prev];
                     const last = updated[updated.length - 1];
                     if (last?.role === "assistant") {
                       const steps: ProgressStep[] = [...(last.progressSteps || [])];
-                      steps.push({ type: "tool_start", label: parsed.tool_start, timestamp: nowTimestamp() });
+                      steps.push({ type: "tool_start", label: display, timestamp: nowTimestamp() });
                       updated[updated.length - 1] = { ...last, progressSteps: steps };
                     }
                     return updated;
@@ -249,12 +250,41 @@ export default function Home() {
 
                 // 도구 호출 완료 → progressSteps에 누적
                 if (parsed.tool_end) {
+                  const display = parsed.tool_end_display || parsed.tool_end;
                   setMessages((prev) => {
                     const updated = [...prev];
                     const last = updated[updated.length - 1];
                     if (last?.role === "assistant") {
                       const steps: ProgressStep[] = [...(last.progressSteps || [])];
-                      steps.push({ type: "tool_end", label: parsed.tool_end, timestamp: nowTimestamp() });
+                      steps.push({ type: "tool_end", label: display, timestamp: nowTimestamp() });
+                      updated[updated.length - 1] = { ...last, progressSteps: steps };
+                    }
+                    return updated;
+                  });
+                }
+
+                // MCP 개별 도구 호출 시작 → progressSteps에 하위 항목으로 누적
+                if (parsed.mcp_tool_start) {
+                  setMessages((prev) => {
+                    const updated = [...prev];
+                    const last = updated[updated.length - 1];
+                    if (last?.role === "assistant") {
+                      const steps: ProgressStep[] = [...(last.progressSteps || [])];
+                      steps.push({ type: "mcp_tool_start", label: parsed.mcp_tool_start, timestamp: nowTimestamp() });
+                      updated[updated.length - 1] = { ...last, progressSteps: steps };
+                    }
+                    return updated;
+                  });
+                }
+
+                // MCP 개별 도구 호출 완료 → progressSteps에 하위 항목으로 누적
+                if (parsed.mcp_tool_end) {
+                  setMessages((prev) => {
+                    const updated = [...prev];
+                    const last = updated[updated.length - 1];
+                    if (last?.role === "assistant") {
+                      const steps: ProgressStep[] = [...(last.progressSteps || [])];
+                      steps.push({ type: "mcp_tool_end", label: parsed.mcp_tool_end, timestamp: nowTimestamp() });
                       updated[updated.length - 1] = { ...last, progressSteps: steps };
                     }
                     return updated;
