@@ -259,6 +259,12 @@ class MCPToolWrapper(BaseTool):
     _BLOCKED_AWS_COMMANDS = [
         "aws cloudwatch get-metric",
         "aws cloudwatch list-metrics",
+        "aws logs filter-log-events",
+        "aws logs get-log-events",
+        "aws logs start-query",
+        "aws logs get-query-results",
+        "aws logs describe-log-groups",
+        "aws logs describe-log-streams",
     ]
 
     async def _arun(self, **kwargs) -> str:
@@ -271,7 +277,8 @@ class MCPToolWrapper(BaseTool):
                     if blocked in cli_cmd:
                         redirect_msg = (
                             f"이 명령어는 call_aws 대신 전용 도구를 사용하세요. "
-                            f"메트릭 조회 → Grafana 도구, 로그 조회 → CloudWatch Logs 도구. "
+                            f"메트릭 조회 → Grafana query_prometheus 도구, "
+                            f"로그 조회 → CloudWatch execute_log_insights_query / describe_log_groups 도구. "
                             f"차단된 명령어: {kwargs.get('cli_command', '')[:100]}"
                         )
                         logger.warning(f"[차단] call_aws 우회 시도: {cli_cmd[:100]}")
