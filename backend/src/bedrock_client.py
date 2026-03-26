@@ -102,8 +102,16 @@ class BedrockAgent:
             model_kwargs={"max_tokens": 4096, "temperature": 0.3},
         )
 
+        # Resource agent는 로그 그룹 탐색 등 정확한 판단이 필요하므로 Main 모델 사용
+        resource_llm = ChatBedrock(
+            model_id=self.main_model_id,
+            region_name=self.region,
+            model_kwargs={"max_tokens": 4096, "temperature": 0.3},
+        )
+
         logger.info(f"[Multi-Agent] Main model: {self.main_model_id}")
         logger.info(f"[Multi-Agent] Sub model: {self.sub_model_id}")
+        logger.info(f"[Multi-Agent] Resource agent model: {self.main_model_id}")
 
         # Sub-agent 그래프 생성
         sub_configs = {
@@ -117,8 +125,10 @@ class BedrockAgent:
         for role, (prompt_fn, rec_limit) in sub_configs.items():
             tools = self._sub_agent_tools.get(role, [])
             if tools:
-                sub_llm_with_tools = sub_llm.bind_tools(tools)
-                graph = build_sub_agent_graph(sub_llm_with_tools, tools)
+                # resource agent만 Main 모델 사용
+                llm_for_role = resource_llm if role == "resource" else sub_llm
+                llm_with_tools = llm_for_role.bind_tools(tools)
+                graph = build_sub_agent_graph(llm_with_tools, tools)
                 self._sub_agent_graphs[role] = graph
                 tool_names = [t.name for t in tools]
                 logger.info(f"[Multi-Agent] {role} agent: {len(tools)} tools ({', '.join(tool_names[:5])}...)")
