@@ -28,6 +28,25 @@ from .time_utils import TIME_PARAM_MAP
 
 # ── 공통 유틸리티 ──────────────────────────────────────────────
 
+def _resolve_schema_type(prop_schema: dict) -> str:
+    """JSON Schema에서 실제 타입 문자열을 추출.
+
+    anyOf/oneOf 안에 null이 아닌 타입이 있으면 해당 타입을 반환.
+    예: {"anyOf": [{"type": "array", ...}, {"type": "null"}]} → "array"
+    """
+    if "type" in prop_schema:
+        return prop_schema["type"]
+    for key in ("anyOf", "oneOf"):
+        variants = prop_schema.get(key)
+        if not variants:
+            continue
+        for variant in variants:
+            vtype = variant.get("type")
+            if vtype and vtype != "null":
+                return vtype
+    return "string"
+
+
 def create_pydantic_model_from_schema(name: str, schema: dict) -> type[BaseModel]:
     """MCP input_schema에서 Pydantic 모델 동적 생성
 
@@ -44,7 +63,7 @@ def create_pydantic_model_from_schema(name: str, schema: dict) -> type[BaseModel
         if prop_name in _INTERNAL_PARAMS:
             continue
 
-        prop_type = prop_schema.get("type", "string")
+        prop_type = _resolve_schema_type(prop_schema)
         description = prop_schema.get("description", "")
 
         type_mapping = {
@@ -244,7 +263,7 @@ class MCPToolWrapper(BaseTool):
             if not isinstance(val, str):
                 continue
             prop_schema = properties.get(key, {})
-            if prop_schema.get("type") != "array":
+            if _resolve_schema_type(prop_schema) != "array":
                 continue
             # JSON 배열 문자열 시도
             stripped = val.strip()
