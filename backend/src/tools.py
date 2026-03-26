@@ -300,7 +300,6 @@ class MCPToolWrapper(BaseTool):
         "aws logs get-log-events",
         "aws logs start-query",
         "aws logs get-query-results",
-        "aws logs describe-log-groups",
         "aws logs describe-log-streams",
     ]
 
