@@ -424,8 +424,12 @@ class MCPToolWrapper(BaseTool):
             else:
                 raw = str(result)
 
-            # MCP 응답 결과 로깅 (디버깅용, 앞부분만)
-            logger.debug(f"MCP tool {self.name} result ({len(raw)}자): {raw[:500]}")
+            # MCP 응답 결과 로깅
+            server_name = self.mcp_tool.server_name if hasattr(self.mcp_tool, 'server_name') else ""
+            if server_name == "cloudwatch":
+                logger.info(f"MCP tool {self.name} result ({len(raw)}자): {raw[:500]}")
+            else:
+                logger.debug(f"MCP tool {self.name} result ({len(raw)}자): {raw[:500]}")
 
             # storedBytes는 AWS API가 부정확한 값(0)을 반환하는 경우가 있어
             # LLM이 이를 근거로 로그 없음 판단을 내리는 것을 방지
