@@ -361,22 +361,37 @@ class MCPToolWrapper(BaseTool):
                     kwargs["limit"] = str(_LOG_QUERY_MAX_LIMIT)
                     logger.info(f"[Limit 강제] {self.name}: limit 미지정 → {_LOG_QUERY_MAX_LIMIT}")
 
-            # ── 타겟 클러스터 가드레일 ──
+            # ── 타겟 클러스터 가드레일 (자동 주입 방식) ──
             if self.allowed_clusters and self.name == "query_prometheus":
                 expr = str(kwargs.get("expr", ""))
                 has_allowed = any(c in expr for c in self.allowed_clusters)
-                if not has_allowed:
-                    blocked_msg = (
-                        f"[타겟 가드레일] PromQL에 허용된 클러스터 필터가 없어 차단됨. "
-                        f"허용 클러스터: {self.allowed_clusters}. "
-                        f"쿼리에 dimension_ClusterName 또는 cluster 라벨로 "
-                        f"해당 클러스터를 반드시 포함하세요. 차단된 expr: {expr[:150]}"
-                    )
-                    logger.warning(
-                        f"[가드레일 차단] {self.name}: allowed_clusters={self.allowed_clusters}, "
-                        f"expr={expr[:200]}"
-                    )
-                    return blocked_msg
+                if not has_allowed and len(self.allowed_clusters) == 1:
+                    # 클러스터가 1개면 자동으로 필터 주입
+                    cluster = self.allowed_clusters[0]
+                    # PromQL에 {} 블록이 있으면 내부에 추가, 없으면 새로 생성
+                    if "{" in expr:
+                        # {기존필터} → {기존필터, ClusterName="cluster"}
+                        injected = expr.replace("}", f', ClusterName="{cluster}"}}', 1)
+                    else:
+                        # metric_name → metric_name{ClusterName="cluster"}
+                        # 함수 호출 등 복잡한 경우도 처리: 첫 번째 메트릭명 뒤에 주입
+                        import re as _re
+                        injected = _re.sub(
+                            r'([a-zA-Z_:][a-zA-Z0-9_:]*)(?!\{)(?=\s*[\)\s,\[]|$)',
+                            rf'\1{{ClusterName="{cluster}"}}',
+                            expr,
+                            count=1,
+                        )
+                    if injected != expr:
+                        logger.info(
+                            f"[가드레일 자동주입] {self.name}: ClusterName=\"{cluster}\" 주입\n"
+                            f"  before: {expr[:200]}\n  after:  {injected[:200]}"
+                        )
+                        kwargs["expr"] = injected
+                    else:
+                        logger.warning(
+                            f"[가드레일] ClusterName 자동주입 실패, 원본 쿼리 그대로 실행: {expr[:200]}"
+                        )
 
             # 알람 시간 범위 강제 덮어쓰기
             if self.enforced_time_window:
