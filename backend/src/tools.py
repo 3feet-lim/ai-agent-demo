@@ -323,6 +323,25 @@ class MCPToolWrapper(BaseTool):
             if self.resolved_profile:
                 self._inject_profile(kwargs)
 
+            # ── 로그 쿼리 limit 강제 ──
+            # LLM이 limit을 크게 잡으면 응답이 수십만 자가 되어 truncation → 데이터 손실
+            _LOG_QUERY_MAX_LIMIT = 100
+            if self.name in ("execute_log_insights_query", "get_logs_insight_query_results"):
+                raw_limit = kwargs.get("limit")
+                if raw_limit is not None:
+                    try:
+                        int_limit = int(raw_limit)
+                        if int_limit > _LOG_QUERY_MAX_LIMIT:
+                            logger.info(
+                                f"[Limit 강제] {self.name}: limit {int_limit} → {_LOG_QUERY_MAX_LIMIT}"
+                            )
+                            kwargs["limit"] = str(_LOG_QUERY_MAX_LIMIT)
+                    except (ValueError, TypeError):
+                        pass
+                else:
+                    kwargs["limit"] = str(_LOG_QUERY_MAX_LIMIT)
+                    logger.info(f"[Limit 강제] {self.name}: limit 미지정 → {_LOG_QUERY_MAX_LIMIT}")
+
             # ── 타겟 클러스터 가드레일 ──
             if self.allowed_clusters and self.name == "query_prometheus":
                 expr = str(kwargs.get("expr", ""))
