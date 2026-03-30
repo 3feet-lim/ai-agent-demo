@@ -9,8 +9,23 @@ from loguru import logger
 
 
 # 알람 메시지에서 발생 시각을 추출하는 정규식
+# "발생 시간", "발생시간", "발생시각", "발생 시각" 모두 매칭
+# 날짜-시간 구분자: 공백 또는 T 허용
 ALARM_TIME_PATTERN = re.compile(
-    r"발생\s*시간\s*[:：]\s*(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\s*(UTC|KST)?",
+    r"발생\s*(?:시간|시각)\s*[:：]\s*(\d{4}-\d{2}-\d{2})[\sT](\d{2}:\d{2}:\d{2})\s*(UTC|KST)?",
+    re.IGNORECASE,
+)
+
+# ISO 8601 형식의 startsAt / 일반 날짜-시간 패턴 (공백 또는 T 구분자)
+_STARTS_AT_PATTERN = re.compile(
+    r"(\d{4}-\d{2}-\d{2})[\sT](\d{2}:\d{2}:\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?",
+)
+
+# "UTC: ... / KST: ..." 형식 패턴
+_UTC_KST_PATTERN = re.compile(
+    r"UTC\s*[:：]\s*(\d{4}-\d{2}-\d{2})[\sT](\d{2}:\d{2}:\d{2})"
+    r"\s*/\s*"
+    r"KST\s*[:：]\s*(\d{4}-\d{2}-\d{2})[\sT](\d{2}:\d{2}:\d{2})",
     re.IGNORECASE,
 )
 
@@ -55,3 +70,70 @@ def parse_alarm_time_window(
     start = dt - timedelta(minutes=margin_minutes)
     end = dt + timedelta(minutes=margin_minutes)
     return (start.strftime("%Y-%m-%dT%H:%M:%SZ"), end.strftime("%Y-%m-%dT%H:%M:%SZ"))
+
+
+# KST 타임존 상수
+_KST = timezone(timedelta(hours=9))
+
+
+def extract_alert_starts_at(message: str) -> str | None:
+    """알람 메시지에서 발생 시각을 추출하여 'UTC: ... / KST: ...' 형식으로 반환.
+
+    매칭 우선순위:
+      1. _UTC_KST_PATTERN — 이미 UTC/KST 쌍이 명시된 경우 그대로 사용
+      2. ALARM_TIME_PATTERN — '발생 시간' / '발생시각' 레이블 뒤의 시각
+      3. _STARTS_AT_PATTERN — ISO 8601 등 일반 날짜-시간 (폴백)
+
+    타임존 미지정 시 UTC로 간주하여 KST 변환 후 반환합니다.
+
+    Args:
+        message: 알람 원문 메시지
+
+    Returns:
+        'UTC: YYYY-MM-DD HH:MM:SS / KST: YYYY-MM-DD HH:MM:SS' 형식 문자열.
+        매칭 실패 시 None.
+    """
+    # 1) 이미 UTC/KST 쌍이 있는 경우
+    m = _UTC_KST_PATTERN.search(message)
+    if m:
+        utc_str = f"{m.group(1)} {m.group(2)}"
+        kst_str = f"{m.group(3)} {m.group(4)}"
+        return f"UTC: {utc_str} / KST: {kst_str}"
+
+    # 2) '발생 시간' / '발생시각' 레이블 매칭
+    m = ALARM_TIME_PATTERN.search(message)
+    if m:
+        date_str, time_str, tz_str = m.group(1), m.group(2), m.group(3)
+        return _format_utc_kst(date_str, time_str, tz_str)
+
+    # 3) 일반 날짜-시간 폴백
+    m = _STARTS_AT_PATTERN.search(message)
+    if m:
+        date_str, time_str = m.group(1), m.group(2)
+        return _format_utc_kst(date_str, time_str, None)
+
+    return None
+
+
+def _format_utc_kst(date_str: str, time_str: str, tz_str: str | None) -> str:
+    """날짜/시간/타임존 문자열을 'UTC: ... / KST: ...' 형식으로 변환.
+
+    Args:
+        date_str: 'YYYY-MM-DD' 형식 날짜
+        time_str: 'HH:MM:SS' 형식 시간
+        tz_str: 'UTC', 'KST', 또는 None (None이면 UTC로 간주)
+    """
+    dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M:%S")
+
+    if tz_str and tz_str.upper() == "KST":
+        dt = dt.replace(tzinfo=_KST)
+    else:
+        # 타임존 미지정 또는 UTC → UTC로 간주
+        dt = dt.replace(tzinfo=timezone.utc)
+
+    utc_dt = dt.astimezone(timezone.utc)
+    kst_dt = dt.astimezone(_KST)
+    return (
+        f"UTC: {utc_dt.strftime('%Y-%m-%d %H:%M:%S')} / "
+        f"KST: {kst_dt.strftime('%Y-%m-%d %H:%M:%S')}"
+    )

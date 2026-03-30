@@ -15,6 +15,7 @@ from langgraph.graph import StateGraph, MessagesState, START, END
 from loguru import logger
 
 from .tools import MCPToolWrapper
+from .time_utils import extract_alert_starts_at
 from .prompts import (
     build_analyze_prompt,
     build_plan_prompt,
@@ -175,6 +176,7 @@ def build_main_graph(
         return {"messages": [
             SystemMessage(content=f"__ORIGINAL_MESSAGE__:{user_msg}"),
             SystemMessage(content=f"__ANALYZE_RESULT__:{json.dumps(analyzed, ensure_ascii=False)}"),
+            SystemMessage(content=f"__EVENT_TIME__:{extract_alert_starts_at(user_msg) or ''}"),
         ]}
 
     def route_after_analyze(state: MessagesState) -> str:
@@ -697,6 +699,9 @@ def build_main_graph(
         targets = target_info.get("targets", [])
         time_range = target_info.get("time_range") or analyzed.get("time_range")
 
+        # 알람 메시지에서 추출한 이벤트 시각을 우선 사용
+        event_time = read_state_meta(state, "EVENT_TIME") or ""
+
         # analyze의 intent/category를 직접 전달하여 리포트 형식 자동 결정
         # account 정보 조회
         profile_name = target_info.get("profile", "")
@@ -719,7 +724,7 @@ def build_main_graph(
         report_prompt = build_report_prompt(
             intent=intent, category=category,
             account_info=account_info, target_resources=target_resources,
-            event_time=time_range or "",
+            event_time=event_time or time_range or "",
         )
 
         # step별 purpose 매핑 구성 (실행 계획에서 step_id → purpose)
