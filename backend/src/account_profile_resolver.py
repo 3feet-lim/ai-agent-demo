@@ -58,7 +58,7 @@ class AccountProfileResolver:
 
     def __init__(self, config_path: Optional[str] = None):
         self._accounts: list[AccountInfo] = []
-        self._default_profile: str = "default"
+        self._default_profile: Optional[str] = None
         self._config_path = config_path or str(
             Path(__file__).parent.parent / "config" / "account_profiles.json"
         )
@@ -75,7 +75,7 @@ class AccountProfileResolver:
             with open(config_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
-            self._default_profile = data.get("default_profile", "default")
+            self._default_profile = data.get("default_profile", None)
             self._accounts = []
 
             for acc in data.get("accounts", []):
@@ -99,7 +99,7 @@ class AccountProfileResolver:
         """설정 파일 다시 로드 (런타임 중 변경 반영)"""
         self._load_config()
 
-    def resolve(self, message: str) -> str:
+    def resolve(self, message: str) -> Optional[str]:
         """
         메시지에서 계정을 식별하고 해당 AWS profile을 반환.
 
@@ -107,7 +107,7 @@ class AccountProfileResolver:
             message: 알람 메시지 또는 사용자 입력 텍스트
 
         Returns:
-            매칭된 AWS profile 이름. 매칭 실패 시 default_profile 반환.
+            매칭된 AWS profile 이름. 매칭 실패 시 default_profile 반환 (None 가능).
         """
         if not message or not self._accounts:
             return self._default_profile
@@ -159,7 +159,7 @@ class AccountProfileResolver:
         return aliases
 
     @property
-    def default_profile(self) -> str:
+    def default_profile(self) -> Optional[str]:
         return self._default_profile
 
     @property

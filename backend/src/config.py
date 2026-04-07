@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     slack_channel: str | None = None  # Slack 채널 (선택, webhook 기본 채널 사용 시 불필요)
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=("../.env", ".env"),  # 프로젝트 루트(..) 우선, 로컬(.env) fallback
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,  # 환경변수 대소문자 구분 안함
