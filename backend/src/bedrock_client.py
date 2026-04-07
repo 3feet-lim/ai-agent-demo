@@ -30,7 +30,7 @@ from .tools import (
     SubAgentTool,
     MCPToolWrapper,
 )
-from .graph import build_main_graph
+from .nodes import build_main_graph
 from .prompts import (
     build_metric_agent_prompt,
     build_log_agent_prompt,

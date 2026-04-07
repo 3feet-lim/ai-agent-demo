@@ -16,6 +16,7 @@ from .sub_agents import (
     build_network_agent_prompt,
 )
 from .general import build_general_prompt
+from .evaluate import build_evaluate_prompt
 
 __all__ = [
     "get_current_time_info",
@@ -23,6 +24,7 @@ __all__ = [
     "build_plan_prompt",
     "build_report_prompt",
     "build_resolve_prompt",
+    "build_evaluate_prompt",
     "build_metric_agent_prompt",
     "build_log_agent_prompt",
     "build_resource_agent_prompt",
